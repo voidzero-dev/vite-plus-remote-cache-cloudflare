@@ -1,4 +1,4 @@
-# Used when Deploy to Cloudflare copies this package into its own repository.
+# Deploy to Cloudflare copies this repository, including this file.
 packages:
   - .
 
