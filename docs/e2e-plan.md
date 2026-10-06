@@ -8,7 +8,7 @@ The [self-hosting quick start](self-hosting.md#quick-start-deploy-to-cloudflare)
 
 Automated regression checks cover independently named resources, an empty D1 database, repository binding, optional Paid cleanup batches, retries from a clean checkout, preserved withdrawal and quotas, rejected repository reassignment, missing storage, and placeholder IDs. Post-deployment HTTP checks require the current deployment ID and `Cache-Control: no-store`. They check an anonymous upload (`401`), malformed fetch (`400`), and a valid cache miss (`404`). A disabled namespace must continue to return `404`. Polling allows for route/revision propagation and fails the build if checks never pass. These checks do not publish data or validate authorized uploads.
 
-Linux, macOS, and Windows CI also copy the package outside the monorepo, install with its standalone frozen lockfile, check types, and bundle the Worker. This catches accidental workspace dependencies that would break the button's subdirectory copy.
+Linux, macOS, and Windows CI also install with the frozen lockfile, check types, run the tests, and bundle the Worker, as the repository created by the button does.
 
 Before releasing the button, complete this live acceptance exercise in a dedicated account or with dedicated test resources:
 
@@ -24,9 +24,9 @@ Local tests cannot prove the Cloudflare setup form, resource provisioning, build
 
 ## Deployment flow
 
-`.github/workflows/remote-cache-deploy.yml` runs when a PR or a push to `main` changes this package, its deployment workflows, or the root dependency/build configuration. It also supports manual runs from the default branch.
+`.github/workflows/remote-cache-deploy.yml` runs for every PR and push to `main`. It also supports manual runs from the default branch.
 
-1. Check the exact source commit with `pnpm check-remote-cache`.
+1. Check the exact source commit with `pnpm check` and `pnpm smoke`.
 2. Create or update the shared staging Worker, D1 database, and R2 bucket. Apply D1 migrations.
 3. Check that the R2 bucket has no public domain. Seed public test fixtures through the authenticated operator API.
 4. Run smoke tests against the deployed HTTP endpoints. Every response must identify the expected commit and workflow attempt through `X-Remote-Cache-Deployment`.
@@ -51,8 +51,8 @@ Add these repository secrets under **Settings → Secrets and variables → Acti
 Use the GitHub CLI from an interactive terminal to enter each secret at its prompt:
 
 ```sh
-gh secret set CLOUDFLARE_ACCOUNT_ID --repo voidzero-dev/vite-task
-gh secret set CLOUDFLARE_API_TOKEN --repo voidzero-dev/vite-task
+gh secret set CLOUDFLARE_ACCOUNT_ID --repo voidzero-dev/vite-plus-remote-cache-cloudflare
+gh secret set CLOUDFLARE_API_TOKEN --repo voidzero-dev/vite-plus-remote-cache-cloudflare
 ```
 
 Set these **repository variables**, which the notification job also needs:
@@ -153,7 +153,7 @@ curl --fail-with-body --silent --show-error \
 6. Use `curl --fail-with-body --dump-header blob-headers.txt --output blob.txt` with the manifest's `blob_url`. Compare the downloaded text with `blob_utf8`.
 7. Run `curl --silent --show-error --include --request POST "$CACHE_ENDPOINT/store"` without credentials. Expect plain-text `401`, not a login page or redirect.
 
-For a CBOR decoder already available in this repository, run this from `packages/remote-cache` after dependency installation, replacing the file path:
+For a CBOR decoder already available in this repository, run this from the repository root after dependency installation, replacing the file path:
 
 ```sh
 node --input-type=module -e 'import { readFileSync } from "node:fs"; import { decode } from "cborg"; console.log(decode(readFileSync(process.argv[1])))' /path/to/fetch-response.cbor
