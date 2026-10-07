@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { deployTarget, runContext, type Target } from '../scripts/ci/deploy.ts';
-import { production, productionTarget } from '../scripts/ci/production.ts';
+import { parseRepositories, production, productionTarget } from '../scripts/ci/production.ts';
 import type { Config, OperatorIO } from '../scripts/operator.ts';
 import { harness } from './helpers.ts';
 
@@ -173,14 +173,32 @@ void test('production deploys only manual default-branch runs from this reposito
     event: 'workflow_dispatch',
     ref: 'refs/heads/main',
   };
-  assert.deepEqual(productionTarget(context), {
-    name: production.name,
-    profile: production.profile,
-    bindings: production.bindings,
-  });
+  // Also validates the committed repository list.
+  const target = productionTarget(context);
+  assert.equal(target.name, production.name);
+  assert.equal(target.profile, production.profile);
+  assert.ok(Object.keys(target.bindings).length > 0);
   assert.throws(() => productionTarget({ ...context, event: 'push' }), /manually/);
   assert.throws(() => productionTarget({ ...context, ref: 'refs/heads/feature' }), /main/);
   assert.throws(() => productionTarget({ ...context, repository: 'someone/copy' }), /voidzero-dev/);
   for (const name of ['vp-cache-ci', 'vp-cache-ci-staging'])
     assert.throws(() => productionTarget(context, { ...production, name }), /staging/);
+});
+
+void test('production repository lists map namespaces to public owner/repo names', () => {
+  assert.deepEqual(
+    parseRepositories('// comment\n{ "one": "acme/one", "two-x": "Acme/two.js", }'),
+    { one: 'acme/one', 'two-x': 'Acme/two.js' },
+  );
+  for (const text of [
+    '',
+    '{}',
+    '["acme/one"]',
+    '{ "One": "acme/one" }',
+    '{ "-one": "acme/one" }',
+    '{ "one": "https://github.com/acme/one" }',
+    '{ "one": 1 }',
+    '{ "one": "acme/one" ',
+  ])
+    assert.throws(() => parseRepositories(text), /production repositor/i);
 });
