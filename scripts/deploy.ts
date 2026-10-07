@@ -44,6 +44,40 @@ export async function checkDeployment(
   }
 }
 
+export async function waitForDeployment(
+  endpoint: string,
+  deployment: string,
+  enabled: boolean,
+  request: typeof fetch = fetch,
+  wait: (ms: number) => Promise<unknown> = setTimeout,
+): Promise<void> {
+  // New workers.dev routes and revisions can take a short time to reach the edge.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await checkDeployment(endpoint, deployment, enabled, request);
+      return;
+    } catch (error) {
+      if (attempt === 9) throw error;
+      await wait(3000);
+    }
+  }
+}
+
+export async function namespaceEnabled(
+  io: OperatorIO,
+  config: Config,
+  namespace: string,
+): Promise<boolean> {
+  const policies = await query(
+    io,
+    config,
+    'SELECT scopes.enabled AS scope_enabled, deployment.enabled AS deployment_enabled FROM scopes CROSS JOIN deployment WHERE scope_id = ?',
+    [namespace],
+  );
+  if (policies.length !== 1) throw new Error('The deployed namespace has no policy');
+  return policies[0]!['scope_enabled'] === 1 && policies[0]!['deployment_enabled'] === 1;
+}
+
 export async function deploy(
   config: Config,
   io: OperatorIO = operatorIO,
@@ -103,25 +137,9 @@ export async function deploy(
     { database, bucket },
   );
   const deployed = await io.readConfig();
-  const policies = await query(
-    io,
-    deployed,
-    'SELECT scopes.enabled AS scope_enabled, deployment.enabled AS deployment_enabled FROM scopes CROSS JOIN deployment WHERE scope_id = ?',
-    [namespace],
-  );
-  if (policies.length !== 1) throw new Error('The deployed namespace has no policy');
-  const enabled = policies[0]!['scope_enabled'] === 1 && policies[0]!['deployment_enabled'] === 1;
+  const enabled = await namespaceEnabled(io, deployed, namespace);
   const endpoint = `${origin}/projects/${namespace}`;
-  // New workers.dev routes and revisions can take a short time to reach the edge.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await checkDeployment(endpoint, deployment, enabled, request);
-      break;
-    } catch (error) {
-      if (attempt === 9) throw error;
-      await wait(3000);
-    }
-  }
+  await waitForDeployment(endpoint, deployment, enabled, request, wait);
   io.print(`Deployment checks passed. Cache endpoint: ${endpoint}`);
   if (!enabled)
     io.print('This namespace remains disabled. Deployment did not change its access policy.');

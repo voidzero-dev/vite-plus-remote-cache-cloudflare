@@ -2,19 +2,24 @@ import assert from 'node:assert/strict';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { URL, pathToFileURL } from 'node:url';
 import { encode } from 'cborg';
-import { ApiError, operatorIO, query, runOperator, type Config } from './operator.ts';
+import {
+  deployTarget,
+  reportDeployment,
+  runContext,
+  type Deployment,
+  type RunContext,
+} from './ci/deploy.ts';
+import { productionTarget } from './ci/production.ts';
+import { ApiError, operatorIO, query, type Config } from './operator.ts';
 import { retireTestData, seedManual, type Admin } from './e2e/fixtures.ts';
 import { runSuite, type Report } from './e2e/suite.ts';
 import { readJson } from './http.ts';
 
 const resultsDir = new URL('../e2e-results/', import.meta.url);
 
-interface Settings {
+interface Settings extends RunContext {
   name: string;
-  repository: string;
-  repositoryId: string;
-  revision: string;
-  deployment: string;
+  subdomain: string;
   origin: string;
   writes: boolean;
   profile: 'free' | 'paid';
@@ -35,33 +40,18 @@ export function settingsFrom(env: Record<string, string | undefined>): Settings 
       'Set REMOTE_CACHE_WORKERS_SUBDOMAIN to the account subdomain, without workers.dev',
     );
   const name = `${prefix}-staging`;
-  const repository = env['GITHUB_REPOSITORY'];
-  if (!repository || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))
-    throw new Error('Invalid repository');
-  const repositoryId = env['GITHUB_REPOSITORY_ID'];
-  if (!repositoryId || !/^[1-9][0-9]*$/.test(repositoryId))
-    throw new Error('Invalid repository ID');
-  const revision = env['REMOTE_CACHE_SOURCE_SHA'];
-  if (!revision || !/^[a-f0-9]{40}$/.test(revision))
-    throw new Error('Use the full source commit SHA');
-  const run = env['GITHUB_RUN_ID'];
-  const attempt = env['GITHUB_RUN_ATTEMPT'];
-  if (!run || !attempt || !/^\d+$/.test(run) || !/^\d+$/.test(attempt))
-    throw new Error('Invalid workflow run identity');
+  const context = runContext(env);
   const defaultBranch = env['REMOTE_CACHE_DEFAULT_BRANCH'];
-  const event = env['GITHUB_EVENT_NAME'];
-  if (!['pull_request', 'push', 'workflow_dispatch'].includes(event ?? ''))
+  if (!['pull_request', 'push', 'workflow_dispatch'].includes(context.event))
     throw new Error('Unsupported staging deployment event');
-  const onDefaultBranch = env['GITHUB_REF'] === `refs/heads/${defaultBranch}`;
-  if (event !== 'pull_request' && !onDefaultBranch)
+  const onDefaultBranch = context.ref === `refs/heads/${defaultBranch}`;
+  if (context.event !== 'pull_request' && !onDefaultBranch)
     throw new Error('Push and manual staging deployments require the default branch');
-  const writes = event === 'push' && onDefaultBranch;
+  const writes = context.event === 'push' && onDefaultBranch;
   return {
+    ...context,
     name,
-    repository,
-    repositoryId,
-    revision,
-    deployment: `${revision}-${run}-${attempt}`,
+    subdomain,
     origin: `https://${name}.${subdomain}.workers.dev`,
     writes,
     profile,
@@ -163,88 +153,64 @@ export function githubTokens(
   };
 }
 
-async function deploy(settings: Settings): Promise<void> {
-  await checkAccountOrigin(settings);
-  await runOperator(
-    [
-      'setup',
-      '--name',
-      settings.name,
-      '--namespace',
-      'e2e',
-      '--repo',
-      settings.repository,
-      '--origin',
-      settings.origin,
-      '--profile',
-      settings.profile,
-      '--retention-days',
-      '1',
-      '--byte-limit',
-      '2000000000',
-      '--entry-limit',
-      '1000',
-      '--association-limit',
-      '2000',
-    ],
+async function deploy(settings: Settings): Promise<Deployment> {
+  const result = await deployTarget(
     {
-      ...operatorIO,
-      async wrangler(args) {
-        // Install all CI namespace policies before the single final deployment.
-        if (args[0] !== 'deploy') await operatorIO.wrangler(args);
-      },
-      async writeConfig(config) {
-        config.vars['DEPLOYMENT_ID'] = settings.deployment;
-        await operatorIO.writeConfig(config);
-      },
-    },
-  );
-  const config = await operatorIO.readConfig();
-  checkConfig(config, settings);
-  const existing = await query(
-    operatorIO,
-    config,
-    'SELECT scope_id, repository_id, endpoint FROM scopes',
-  );
-  if (
-    existing.some(
-      (scope) =>
-        !['e2e', 'other', 'manual'].includes(String(scope['scope_id'])) ||
-        scope['repository_id'] !== settings.repositoryId ||
-        scope['endpoint'] !== `${settings.origin}/projects/${String(scope['scope_id'])}`,
-    )
-  )
-    throw new Error('CI resources must contain only this repository’s verification namespaces');
-  for (const scope of ['other', 'manual'])
-    await query(
-      operatorIO,
-      config,
-      `INSERT INTO scopes
+      name: settings.name,
+      subdomain: settings.subdomain,
+      profile: settings.profile,
+      bindings: { e2e: settings.repository },
+      setupArgs: [
+        '--retention-days',
+        '1',
+        '--byte-limit',
+        '2000000000',
+        '--entry-limit',
+        '1000',
+        '--association-limit',
+        '2000',
+      ],
+      async prepare(config) {
+        checkConfig(config, settings);
+        const existing = await query(
+          operatorIO,
+          config,
+          'SELECT scope_id, repository_id, endpoint FROM scopes',
+        );
+        if (
+          existing.some(
+            (scope) =>
+              !['e2e', 'other', 'manual'].includes(String(scope['scope_id'])) ||
+              scope['repository_id'] !== settings.repositoryId ||
+              scope['endpoint'] !== `${settings.origin}/projects/${String(scope['scope_id'])}`,
+          )
+        )
+          throw new Error(
+            'CI resources must contain only this repository’s verification namespaces',
+          );
+        for (const scope of ['other', 'manual'])
+          await query(
+            operatorIO,
+            config,
+            `INSERT INTO scopes
     (scope_id, endpoint, repository, repository_id, repository_owner_id, branch, retention_seconds)
     SELECT ?, ?, repository, repository_id, repository_owner_id, branch, 86400 FROM scopes WHERE scope_id = 'e2e'
     ON CONFLICT(scope_id) DO NOTHING`,
-      [scope, `${settings.origin}/projects/${scope}`],
-    );
-  // Recover policy changes left by an interrupted e2e run. These resources belong to CI only.
-  await query(operatorIO, config, 'UPDATE deployment SET enabled = 1, writes_enabled = 1');
-  await query(
-    operatorIO,
-    config,
-    `UPDATE scopes SET enabled = 1, writes_enabled = 1,
+            [scope, `${settings.origin}/projects/${scope}`],
+          );
+        // Recover policy changes left by an interrupted e2e run. These resources belong to CI only.
+        await query(operatorIO, config, 'UPDATE deployment SET enabled = 1, writes_enabled = 1');
+        await query(
+          operatorIO,
+          config,
+          `UPDATE scopes SET enabled = 1, writes_enabled = 1,
     byte_limit = 2000000000, entry_limit = 1000, association_limit = 2000`,
+        );
+      },
+    },
+    settings,
   );
-  config.vars['NAMESPACES'] = '["e2e","other","manual"]';
-  await operatorIO.writeConfig(config);
-  await operatorIO.wrangler(['deploy', '--config', 'wrangler.operator.json']);
-  const managed = (await operatorIO.api(`/r2/buckets/${settings.name}/domains/managed`)) as {
-    enabled: boolean;
-  };
-  const custom = (await operatorIO.api(`/r2/buckets/${settings.name}/domains/custom`)) as {
-    domains: unknown[];
-  };
-  assert.equal(managed.enabled, false, 'R2 must remain private');
-  assert.deepEqual(custom.domains, [], 'R2 must have no public custom domain');
-  const fixture = await seedManual(cloudflareAdmin(config), settings.deployment);
+  const fixture = await seedManual(cloudflareAdmin(result.config), settings.deployment);
   await mkdir(resultsDir, { recursive: true });
   await writeFile(
     new URL('manual-fetch.cbor', resultsDir),
@@ -255,7 +221,7 @@ async function deploy(settings: Settings): Promise<void> {
     JSON.stringify(
       {
         deployment: settings.deployment,
-        source_sha: settings.revision,
+        source_sha: settings.sha,
         endpoint: `${settings.origin}/projects/manual`,
         blob_url: `${settings.origin}/projects/manual/blob/${fixture.blobId}`,
         value_utf8: Buffer.from(fixture.value).toString(),
@@ -270,6 +236,7 @@ async function deploy(settings: Settings): Promise<void> {
       process.env['GITHUB_OUTPUT'],
       `endpoint=${settings.origin}/projects/manual\ndeployment=${settings.deployment}\n`,
     );
+  return result;
 }
 
 async function verify(settings: Settings): Promise<void> {
@@ -309,11 +276,14 @@ async function verify(settings: Settings): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const settings = settingsFrom(process.env);
-    const command = process.argv[2];
-    if (command === 'deploy') await deploy(settings);
-    else if (command === 'test') await verify(settings);
-    else throw new Error('Use deploy or test');
+    const [command, target] = process.argv.slice(2);
+    if (command === 'deploy' && target === 'staging')
+      await reportDeployment(await deploy(settingsFrom(process.env)));
+    else if (command === 'deploy' && target === 'production') {
+      const context = runContext(process.env);
+      await reportDeployment(await deployTarget(productionTarget(context), context));
+    } else if (command === 'test') await verify(settingsFrom(process.env));
+    else throw new Error('Use deploy staging, deploy production, or test');
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Cloudflare CI failed');
     process.exitCode = 1;

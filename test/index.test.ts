@@ -4,3 +4,4 @@ import './operator.test.ts';
 import './deploy.test.ts';
 import './failures.test.ts';
 import './deployed.test.ts';
+import './ci.test.ts';
