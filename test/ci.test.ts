@@ -2,11 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { deployTarget, runContext, type Target } from '../scripts/ci/deploy.ts';
 import { parseRepositories, production, productionTarget } from '../scripts/ci/production.ts';
-import type { Config, OperatorIO } from '../scripts/operator.ts';
+import { readTemplate, type Config, type OperatorIO } from '../scripts/operator.ts';
 import { harness } from './helpers.ts';
 
 const sha = 'a'.repeat(40);
 const deployment = `${sha}-42-1`;
+const database = '12345678-1234-1234-1234-123456789abc';
+const dispatch = {
+  repository: production.source,
+  event: 'workflow_dispatch',
+  ref: 'refs/heads/main',
+};
 
 void test('CI run context identifies the source commit and workflow attempt', () => {
   const env = {
@@ -43,7 +49,6 @@ void test('CI deployments set up every namespace before one Worker deployment an
     namespaces: ['one', 'two'],
     deploymentId: deployment,
   });
-  const database = '12345678-1234-1234-1234-123456789abc';
   const repositories: Record<string, number> = { 'acme/one': 1, 'acme/two': 2 };
   let config: Config | undefined;
   let migrated = false;
@@ -168,11 +173,7 @@ void test('CI deployments set up every namespace before one Worker deployment an
 });
 
 void test('production deploys only manual default-branch runs from this repository', () => {
-  const context = {
-    repository: production.source,
-    event: 'workflow_dispatch',
-    ref: 'refs/heads/main',
-  };
+  const context = dispatch;
   // Also validates the committed repository list.
   const target = productionTarget(context);
   assert.equal(target.name, production.name);
@@ -201,4 +202,59 @@ void test('production repository lists map namespaces to public owner/repo names
     '{ "one": "acme/one" ',
   ])
     assert.throws(() => parseRepositories(text), /production repositor/i);
+});
+
+void test('production deployments enable listed namespaces and disable all others', async () => {
+  const h = await harness();
+  const config = await readTemplate();
+  config.d1_databases[0]!.database_id = database;
+  const printed: string[] = [];
+  const unexpected = async () => {
+    throw new Error('Unexpected operator call');
+  };
+  const io: OperatorIO = {
+    async api(path, _method, body) {
+      assert.equal(path, `/d1/database/${database}/query`);
+      const { sql, params } = body as { sql: string; params: (string | number | null)[] };
+      return [
+        await h.db
+          .prepare(sql)
+          .bind(...params)
+          .all(),
+      ];
+    },
+    github: unexpected,
+    wrangler: unexpected,
+    readConfig: unexpected,
+    writeConfig: unexpected,
+    lifecycle: unexpected,
+    print: (message) => printed.push(message),
+  };
+  const policies = async () =>
+    (
+      await h.db
+        .prepare('SELECT scope_id, enabled, writes_enabled, policy_version FROM scopes ORDER BY scope_id')
+        .all()
+    ).results;
+  const target = productionTarget(dispatch, production, '{ "test": "owner/repo" }');
+  const expected = [
+    { scope_id: 'other', enabled: 0, writes_enabled: 0, policy_version: 2 },
+    { scope_id: 'test', enabled: 1, writes_enabled: 1, policy_version: 3 },
+  ];
+  try {
+    // A manual upload pause on a listed namespace lasts only until the next deployment.
+    // The pause and its reversal each bump policy_version.
+    await h.db.prepare("UPDATE scopes SET writes_enabled = 0 WHERE scope_id = 'test'").run();
+    await target.prepare!(config, io);
+    assert.deepEqual(await policies(), expected);
+    assert.deepEqual(printed, ['Disabled namespace other: it is not in the repository list']);
+
+    // A deployment that changes no switch leaves in-flight uploads alone.
+    printed.length = 0;
+    await target.prepare!(config, io);
+    assert.deepEqual(await policies(), expected);
+    assert.deepEqual(printed, []);
+  } finally {
+    await h.close();
+  }
 });

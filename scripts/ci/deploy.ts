@@ -46,7 +46,7 @@ export interface Target {
   bindings: Readonly<Record<string, string>>;
   setupArgs?: string[];
   // Runs after every namespace is set up, before the Worker deployment.
-  prepare?(config: Config): Promise<void>;
+  prepare?(config: Config, io: OperatorIO): Promise<void>;
 }
 
 export interface Deployment {
@@ -104,7 +104,7 @@ export async function deployTarget(
       setupIO,
     );
   const config = await io.readConfig();
-  await target.prepare?.(config);
+  await target.prepare?.(config, io);
   const scopes = await query(io, config, 'SELECT scope_id FROM scopes');
   config.vars['NAMESPACES'] = JSON.stringify(scopes.map((scope) => String(scope['scope_id'])));
   await io.writeConfig(config);

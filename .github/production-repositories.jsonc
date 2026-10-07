@@ -1,8 +1,8 @@
 // Public GitHub repositories served by the production remote cache.
 // Each key is a cache namespace. Its endpoint is
 // https://voidzero-remote-cache.<subdomain>.workers.dev/projects/<namespace>
-// The next production deployment binds added repositories. Removing an entry does not unbind
-// its namespace; withdraw it with `pnpm operator policy` or `pnpm operator purge`.
+// Each production deployment enables every listed namespace and disables every other namespace,
+// overriding `pnpm operator policy`. Data in a removed namespace expires with its retention.
 {
   "rolldown": "rolldown/rolldown"
 }

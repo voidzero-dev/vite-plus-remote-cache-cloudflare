@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
 import { parse, type ParseError } from 'jsonc-parser';
+import { query } from '../operator.ts';
 import type { RunContext, Target } from './deploy.ts';
 
 interface ProductionConfig {
@@ -51,5 +52,33 @@ export function productionTarget(
   if (context.ref !== config.ref) throw new Error(`Production deploys only from ${config.ref}`);
   if (/-(ci|staging)$/.test(config.name))
     throw new Error('Production cannot use CI staging resources');
-  return { name: config.name, profile: config.profile, bindings: parseRepositories(repositories) };
+  const bindings = parseRepositories(repositories);
+  const listed = JSON.stringify(Object.keys(bindings));
+  return {
+    name: config.name,
+    profile: config.profile,
+    bindings,
+    // The list decides which namespaces serve reads and accept uploads, overriding
+    // `pnpm operator policy`. Only changed rows are updated: the changed_policy trigger bumps
+    // policy_version on any switch update, which stops in-flight uploads from publishing.
+    async prepare(deployed, io) {
+      await query(
+        io,
+        deployed,
+        `UPDATE scopes SET enabled = 1, writes_enabled = 1
+        WHERE scope_id IN (SELECT value FROM json_each(?)) AND (enabled = 0 OR writes_enabled = 0)`,
+        [listed],
+      );
+      const disabled = await query(
+        io,
+        deployed,
+        `UPDATE scopes SET enabled = 0, writes_enabled = 0
+        WHERE scope_id NOT IN (SELECT value FROM json_each(?)) AND (enabled = 1 OR writes_enabled = 1)
+        RETURNING scope_id`,
+        [listed],
+      );
+      for (const scope of disabled)
+        io.print(`Disabled namespace ${String(scope['scope_id'])}: it is not in the repository list`);
+    },
+  };
 }

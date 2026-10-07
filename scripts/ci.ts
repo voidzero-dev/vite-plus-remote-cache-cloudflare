@@ -170,10 +170,10 @@ async function deploy(settings: Settings): Promise<Deployment> {
         '--association-limit',
         '2000',
       ],
-      async prepare(config) {
+      async prepare(config, io) {
         checkConfig(config, settings);
         const existing = await query(
-          operatorIO,
+          io,
           config,
           'SELECT scope_id, repository_id, endpoint FROM scopes',
         );
@@ -190,7 +190,7 @@ async function deploy(settings: Settings): Promise<Deployment> {
           );
         for (const scope of ['other', 'manual'])
           await query(
-            operatorIO,
+            io,
             config,
             `INSERT INTO scopes
     (scope_id, endpoint, repository, repository_id, repository_owner_id, branch, retention_seconds)
@@ -199,9 +199,9 @@ async function deploy(settings: Settings): Promise<Deployment> {
             [scope, `${settings.origin}/projects/${scope}`],
           );
         // Recover policy changes left by an interrupted e2e run. These resources belong to CI only.
-        await query(operatorIO, config, 'UPDATE deployment SET enabled = 1, writes_enabled = 1');
+        await query(io, config, 'UPDATE deployment SET enabled = 1, writes_enabled = 1');
         await query(
-          operatorIO,
+          io,
           config,
           `UPDATE scopes SET enabled = 1, writes_enabled = 1,
     byte_limit = 2000000000, entry_limit = 1000, association_limit = 2000`,
