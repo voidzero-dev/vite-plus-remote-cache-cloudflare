@@ -81,7 +81,7 @@ jobs:
       - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
       - name: Create or update persistent staging resources
         id: deploy
-        run: pnpm ci:deploy
+        run: pnpm ci:deploy staging
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

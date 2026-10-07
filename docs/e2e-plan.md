@@ -169,6 +169,18 @@ Subsequent runs restore CI-owned policy switches in case a prior process stopped
 
 Staging policies belong to CI. Do not use these names for an operator-managed production cache. Monitor storage, deletion backlogs, and Cloudflare allowances. Resource budgets do not guarantee zero cost. Set `REMOTE_CACHE_DEPLOY_ENABLED=false` to stop automatic deployments; the existing staging environment remains available.
 
+## Production deployment
+
+`.github/workflows/remote-cache-production.yml` deploys this repository's production cache. It runs only when a maintainer starts it from **Actions → Remote cache production → Run workflow** on `main`. Pushes and PRs never deploy production. Before starting it, check that the commit's main-branch staging run passed.
+
+The workflow repeats `pnpm check` and `pnpm smoke`, then runs `pnpm ci:deploy production`. `scripts/ci/production.ts` names the Worker, D1 database, and R2 bucket. `.github/production-repositories.jsonc` maps each cache namespace to a public GitHub repository. The command refuses other repositories, branches, and events, so repositories created by Deploy to Cloudflare cannot run it. Staging and production share `scripts/ci/deploy.ts`. Setup creates or reuses the named resources, applies migrations, and binds each namespace; then the Worker deploys once. Every namespace endpoint must then serve the new deployment ID. The run summary and the `production` environment list the endpoints, for example `https://voidzero-remote-cache.<subdomain>.workers.dev/projects/rolldown`.
+
+To bind another repository, add `"namespace": "owner/repository"` to `.github/production-repositories.jsonc`, merge the change, and run the workflow. Only public repositories can publish. The list decides which namespaces serve reads and accept uploads: each deployment enables every listed namespace and disables every other namespace, so a `pnpm operator policy` change lasts only until the next deployment. To withdraw a repository, remove its entry and run the workflow. For an immediate stop, also run `pnpm operator policy --namespace <namespace> --enabled off`. Data in a disabled namespace expires with its retention; `pnpm operator purge` deletes it sooner. Deployments never change the cache-wide `pnpm operator deployment` switches or move a namespace to another repository. To roll back, re-run an earlier successful production run. A re-run deploys its original commit.
+
+Production uses the same `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets as staging. Secrets in the `production` environment take precedence, so a production-only token can replace them without workflow changes. Internal PR staging runs receive the repository secrets; while both environments share one token, anyone who can push a branch here can change production resources. Add required reviewers to the `production` environment to approve each deployment.
+
+Operator commands read `wrangler.operator.json`, which the workflow does not keep. To recreate it, check out the deployed commit and repeat `pnpm operator setup` with the Worker name from `scripts/ci/production.ts` and an entry from `.github/production-repositories.jsonc`. Setup redeploys that checkout.
+
 ## Release and incident exercises
 
 Before a production release, record the commit, workflow URL, Cloudflare plan, region, and outcome for these controlled staging exercises:
