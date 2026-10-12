@@ -78,7 +78,9 @@ export function productionTarget(
         [listed],
       );
       for (const scope of disabled)
-        io.print(`Disabled namespace ${String(scope['scope_id'])}: it is not in the repository list`);
+        io.print(
+          `Disabled namespace ${String(scope['scope_id'])}: it is not in the repository list`,
+        );
     },
   };
 }

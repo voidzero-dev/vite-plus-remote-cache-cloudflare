@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { harness } from './helpers.ts';
 import { runSuite } from '../scripts/e2e/suite.ts';
 import { retireTestData, seedManual, type Admin } from '../scripts/e2e/fixtures.ts';
@@ -12,7 +12,7 @@ const modes = [
 ];
 
 for (const { mode, writes, full, checks, runs } of modes)
-  void test(`deployed HTTP suite runs against workerd: ${mode}`, async () => {
+  test(`deployed HTTP suite runs against workerd: ${mode}`, async () => {
     const h = await harness({
       deploymentId: 'suite-local',
       namespaces: ['test', 'other', 'e2e', 'manual'],
@@ -100,7 +100,7 @@ for (const { mode, writes, full, checks, runs } of modes)
     }
   });
 
-void test('CI shares persistent staging across events and only permits writes on default-branch pushes', () => {
+test('CI shares persistent staging across events and only permits writes on default-branch pushes', () => {
   const env = {
     REMOTE_CACHE_WORKERS_SUBDOMAIN: 'example',
     GITHUB_REPOSITORY: 'owner/repo',
@@ -146,7 +146,7 @@ void test('CI shares persistent staging across events and only permits writes on
   assert.throws(() => settingsFrom({ ...env, GITHUB_EVENT_NAME: 'pull_request_target' }));
 });
 
-void test('OIDC requests use only GitHub, reject redirects, and reuse tokens only for the same audience', async () => {
+test('OIDC requests use only GitHub, reject redirects, and reuse tokens only for the same audience', async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   const request: typeof fetch = async (url, init) => {
     const requestUrl = url instanceof Request ? url.url : String(url);

@@ -20,7 +20,7 @@ The button copies this package into a new GitHub repository in your account and 
    | `CACHE_NAMESPACE`  | Endpoint namespace; defaults to `cache`                                |
    | `CACHE_PROFILE`    | Keep `free`; choose `paid` only when you want the larger cleanup batch |
 
-4. Use `pnpm build` as the build command and `pnpm deploy` as the deploy command. The copied package includes its own dependency versions and lockfile. Use Node.js 22.12 or newer and the pinned pnpm version. The root directory in this new repository is `/`.
+4. Use `pnpm build` as the build command and `pnpm deploy` as the deploy command. The copied package includes its own dependency versions and lockfile. Use the Node.js version in `.node-version` and the pinned pnpm version. Supported Node.js versions are `^22.18.0 || ^24.11.0 || >=26.0.0`. The root directory in this new repository is `/`.
 5. Check the selected build API token's permissions. Deployment needs Workers, D1, and Workers R2 Storage write access. Cloudflare manages the build token, but its [documented default permissions](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/#api-token) do not include D1. Add D1 Edit / Write to that token under **My Profile → API Tokens**, or select a token with these permissions under **Worker → Settings → Build**. Keep the token in Cloudflare; do not add it as a Worker variable or commit it.
 6. Deploy. If you changed the token after the first build started, retry the build. The deploy command applies migrations, configures private storage and cleanup, binds your application repository, and checks the public endpoint. A successful log ends with `Deployment checks passed. Cache endpoint: ...`.
 

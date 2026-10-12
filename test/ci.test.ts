@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { deployTarget, runContext, type Target } from '../scripts/ci/deploy.ts';
 import { parseRepositories, production, productionTarget } from '../scripts/ci/production.ts';
 import { readTemplate, type Config, type OperatorIO } from '../scripts/operator.ts';
@@ -14,7 +14,7 @@ const dispatch = {
   ref: 'refs/heads/main',
 };
 
-void test('CI run context identifies the source commit and workflow attempt', () => {
+test('CI run context identifies the source commit and workflow attempt', () => {
   const env = {
     GITHUB_REPOSITORY: 'owner/repo',
     GITHUB_REPOSITORY_ID: '123',
@@ -43,7 +43,7 @@ void test('CI run context identifies the source commit and workflow attempt', ()
     assert.throws(() => runContext({ ...env, ...override }));
 });
 
-void test('CI deployments set up every namespace before one Worker deployment and preserve withdrawals', async () => {
+test('CI deployments set up every namespace before one Worker deployment and preserve withdrawals', async () => {
   const h = await harness({
     initializeDatabase: false,
     namespaces: ['one', 'two'],
@@ -172,7 +172,7 @@ void test('CI deployments set up every namespace before one Worker deployment an
   }
 });
 
-void test('production deploys only manual default-branch runs from this repository', () => {
+test('production deploys only manual default-branch runs from this repository', () => {
   const context = dispatch;
   // Also validates the committed repository list.
   const target = productionTarget(context);
@@ -186,7 +186,7 @@ void test('production deploys only manual default-branch runs from this reposito
     assert.throws(() => productionTarget(context, { ...production, name }), /staging/);
 });
 
-void test('production repository lists map namespaces to public owner/repo names', () => {
+test('production repository lists map namespaces to public owner/repo names', () => {
   assert.deepEqual(
     parseRepositories('// comment\n{ "one": "acme/one", "two-x": "Acme/two.js", }'),
     { one: 'acme/one', 'two-x': 'Acme/two.js' },
@@ -204,7 +204,7 @@ void test('production repository lists map namespaces to public owner/repo names
     assert.throws(() => parseRepositories(text), /production repositor/i);
 });
 
-void test('production deployments enable listed namespaces and disable all others', async () => {
+test('production deployments enable listed namespaces and disable all others', async () => {
   const h = await harness();
   const config = await readTemplate();
   config.d1_databases[0]!.database_id = database;
@@ -233,7 +233,9 @@ void test('production deployments enable listed namespaces and disable all other
   const policies = async () =>
     (
       await h.db
-        .prepare('SELECT scope_id, enabled, writes_enabled, policy_version FROM scopes ORDER BY scope_id')
+        .prepare(
+          'SELECT scope_id, enabled, writes_enabled, policy_version FROM scopes ORDER BY scope_id',
+        )
         .all()
     ).results;
   const target = productionTarget(dispatch, production, '{ "test": "owner/repo" }');

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { deploy, checkDeployment } from '../scripts/deploy.ts';
 import { ApiError, readTemplate, type OperatorIO } from '../scripts/operator.ts';
 import { harness } from './helpers.ts';
 
-void test('button deployment uses provisioned bindings and preserves policies on a fresh-checkout retry', async () => {
+test('button deployment uses provisioned bindings and preserves policies on a fresh-checkout retry', async () => {
   const h = await harness({
     initializeDatabase: false,
     namespaces: ['cache'],
@@ -152,7 +152,7 @@ void test('button deployment uses provisioned bindings and preserves policies on
   }
 });
 
-void test('button deployment rejects incomplete configuration before contacting Cloudflare', async () => {
+test('button deployment rejects incomplete configuration before contacting Cloudflare', async () => {
   const config = await readTemplate();
   const unexpected = async () => {
     throw new Error('Unexpected operator call');
@@ -178,7 +178,7 @@ void test('button deployment rejects incomplete configuration before contacting 
   );
 });
 
-void test('deployment checks reject a stale revision, unexpected status, or cached response', async () => {
+test('deployment checks reject a stale revision, unexpected status, or cached response', async () => {
   for (const response of [
     new Response(null, {
       status: 401,
