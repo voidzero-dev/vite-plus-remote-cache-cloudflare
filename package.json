@@ -24,7 +24,7 @@
     "@cloudflare/workers-types": "5.20260911.1",
     "@types/node": "25.0.3",
     "cborg": "6.1.2",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "jsonc-parser": "3.3.1",
     "miniflare": "5.20260911.0-alpha",
     "tsx": "4.23.13",
