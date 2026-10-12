@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import {
   runOperator,
   resolveRepository,
@@ -10,7 +10,7 @@ import {
 } from '../scripts/operator.ts';
 import { harness } from './helpers.ts';
 
-void test('operator setup validates before writes and preserves withdrawal on retries', async () => {
+test('operator setup validates before writes and preserves withdrawal on retries', async () => {
   let config = await readTemplate();
   const h = await harness();
   const commands: string[][] = [];
@@ -151,7 +151,7 @@ void test('operator setup validates before writes and preserves withdrawal on re
   }
 });
 
-void test('operator upgrades isolate rate counters by Worker and retain them across revisions', async () => {
+test('operator upgrades isolate rate counters by Worker and retain them across revisions', async () => {
   const namespaces = new Set<string>();
   for (const name of ['vp-cache-ci-staging', 'custom-ci-staging', 'production']) {
     let config = await readTemplate();
@@ -198,7 +198,7 @@ void test('operator upgrades isolate rate counters by Worker and retain them acr
   }
 });
 
-void test('operator setup creates resources and initializes an empty database', async () => {
+test('operator setup creates resources and initializes an empty database', async () => {
   const h = await harness({ initializeDatabase: false });
   let config = await readTemplate();
   let database = false;
@@ -271,7 +271,7 @@ void test('operator setup creates resources and initializes an empty database', 
   }
 });
 
-void test('teardown resumes after partial resource deletion', async () => {
+test('teardown resumes after partial resource deletion', async () => {
   const config = await readTemplate();
   let database = true,
     bucket = true,
@@ -325,7 +325,7 @@ void test('teardown resumes after partial resource deletion', async () => {
   assert.deepEqual(deleted, ['bucket', 'database', 'worker']);
 });
 
-void test('operator rejects private repositories and injection-shaped names', async () => {
+test('operator rejects private repositories and injection-shaped names', async () => {
   const io = {
     github: async () => ({ id: 123, owner: { id: 456 }, private: true, visibility: 'private' }),
   };

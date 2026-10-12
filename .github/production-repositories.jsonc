@@ -5,5 +5,5 @@
 // overriding `pnpm operator policy`. Data in a removed namespace expires with its retention.
 {
   "rolldown": "rolldown/rolldown",
-  "vite-plus": "voidzero-dev/vite-plus"
+  "vite-plus": "voidzero-dev/vite-plus",
 }

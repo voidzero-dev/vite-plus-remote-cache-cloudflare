@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { decode, encode } from 'cborg';
 import { decodeEnvelope, encodeEnvelope } from '../src/cbor.ts';
 import { defaults } from '../src/limits.ts';
@@ -7,7 +7,7 @@ import { multipart } from '../src/multipart.ts';
 import { collect, Deadline, Input } from '../src/streams.ts';
 import fixtures from './fixtures/protocol.json';
 
-void test('CBOR fixtures preserve opaque, empty, indefinite, and noncanonical bytes', () => {
+test('CBOR fixtures preserve opaque, empty, indefinite, and noncanonical bytes', () => {
   for (const fixture of fixtures.fetch) {
     const actual = decodeEnvelope(Buffer.from(fixture.hex, 'hex'), false, defaults);
     assert.deepEqual(Array.from(actual.key), fixtures.expectedKey, fixture.name);
@@ -21,7 +21,7 @@ void test('CBOR fixtures preserve opaque, empty, indefinite, and noncanonical by
   });
 });
 
-void test('multipart accepts bounded preamble, padding, and epilogue and rejects invalid parts', async () => {
+test('multipart accepts bounded preamble, padding, and epilogue and rejects invalid parts', async () => {
   const headers =
     'Content-Disposition: form-data; name="metadata"\r\nContent-Type: application/cbor\r\n\r\n';
   const valid = `preamble\r\n--x \t\r\n${headers}abc\r\n--x-- \t\r\nepilogue`;
@@ -49,7 +49,7 @@ void test('multipart accepts bounded preamble, padding, and epilogue and rejects
   await assert.rejects(parse('a'.repeat(1025) + '\r\n' + valid), { status: 413 });
 });
 
-void test('CBOR rejects duplicate, missing, wrong-type, nested, oversized, and trailing fields', () => {
+test('CBOR rejects duplicate, missing, wrong-type, nested, oversized, and trailing fields', () => {
   for (const hex of [
     'a2636b657940636b657940',
     'a1636b657940',
@@ -71,7 +71,7 @@ void test('CBOR rejects duplicate, missing, wrong-type, nested, oversized, and t
   );
 });
 
-void test('multipart accepts every split point, either part order, and boundary-like blob bytes', async () => {
+test('multipart accepts every split point, either part order, and boundary-like blob bytes', async () => {
   for (const blobFirst of [false, true]) {
     const metadata =
       '--test\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/cbor\r\n\r\nabc\r\n';

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { encode } from 'cborg';
 import { harness, bytes, decodeResponse } from './helpers.ts';
 import { cleanup, getScope, reserve, publish } from '../src/database.ts';
@@ -10,7 +10,7 @@ import { Deadline } from '../src/streams.ts';
 import { Observations } from '../src/observations.ts';
 import { Admission } from '../src/admission.ts';
 
-void test('fallbacks return only opaque keys without R2 reads, while exact failures remain 503', async () => {
+test('fallbacks return only opaque keys without R2 reads, while exact failures remain 503', async () => {
   const h = await harness();
   try {
     const original = await h.mf.getBindings<Env>();
@@ -87,7 +87,7 @@ function multipartRequest(blob?: Uint8Array): Request {
   });
 }
 
-void test('R2 PUT, multipart creation, part, completion, and upload-ID recording failures leave mappings unchanged', async () => {
+test('R2 PUT, multipart creation, part, completion, and upload-ID recording failures leave mappings unchanged', async () => {
   const h = await harness();
   try {
     await h.store(bytes('A'), bytes('S'), bytes('old'));
@@ -161,7 +161,7 @@ void test('R2 PUT, multipart creation, part, completion, and upload-ID recording
   }
 });
 
-void test('failed deletion remains charged and a retry removes only the claimed generation', async () => {
+test('failed deletion remains charged and a retry removes only the claimed generation', async () => {
   const h = await harness();
   try {
     await h.store(bytes('A'), bytes('S'), bytes('old'), bytes('blob'));
@@ -202,7 +202,7 @@ void test('failed deletion remains charged and a retry removes only the claimed 
   }
 });
 
-void test('unknown-length requests reserve the full limit and cancellation prevents publication', async () => {
+test('unknown-length requests reserve the full limit and cancellation prevents publication', async () => {
   const h = await harness();
   try {
     const env = await h.mf.getBindings<Env>();
@@ -257,7 +257,7 @@ void test('unknown-length requests reserve the full limit and cancellation preve
   }
 });
 
-void test('scope/deployment disable and capacity changes revoke pending publications', async () => {
+test('scope/deployment disable and capacity changes revoke pending publications', async () => {
   const h = await harness();
   try {
     for (const sql of [
@@ -288,7 +288,7 @@ void test('scope/deployment disable and capacity changes revoke pending publicat
   }
 });
 
-void test('scope and deployment entry limits roll back association changes, while replacements use no new slot', async () => {
+test('scope and deployment entry limits roll back association changes, while replacements use no new slot', async () => {
   const h = await harness();
   try {
     assert.equal((await h.store(bytes('A'), bytes('S'), bytes('old'))).status, 200);
@@ -320,7 +320,7 @@ void test('scope and deployment entry limits roll back association changes, whil
   }
 });
 
-void test('cleanup preserves a recreated target and claims at most 16 generations', async () => {
+test('cleanup preserves a recreated target and claims at most 16 generations', async () => {
   const h = await harness();
   try {
     await h.store(bytes('A'), bytes('S'), bytes('old'), bytes('old'));
@@ -371,7 +371,7 @@ void test('cleanup preserves a recreated target and claims at most 16 generation
   }
 });
 
-void test('isolate admission bounds memory and releases capacity', () => {
+test('isolate admission bounds memory and releases capacity', () => {
   const admission = new Admission();
   const first = admission.acquire(true),
     second = admission.acquire(true);

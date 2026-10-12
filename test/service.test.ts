@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test } from 'vite-plus/test';
 import { encode } from 'cborg';
 import { bytes, decodeResponse, endpoint, harness } from './helpers.ts';
 import { getScope, publish, reserve } from '../src/database.ts';
 
-void test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace isolation, and read-only access', async () => {
+test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace isolation, and read-only access', async () => {
   const h = await harness();
   try {
     const a = Uint8Array.of(0, 255),
@@ -69,7 +69,7 @@ void test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace is
   }
 });
 
-void test('signed GitHub policy denies forks, wrong owners, private repos, non-push events, branches, audiences, and invalid times', async () => {
+test('signed GitHub policy denies forks, wrong owners, private repos, non-push events, branches, audiences, and invalid times', async () => {
   const h = await harness();
   try {
     for (const claims of [
@@ -146,7 +146,7 @@ void test('signed GitHub policy denies forks, wrong owners, private repos, non-p
   }
 });
 
-void test('JWKS outages fail closed and have a refresh cooldown', async () => {
+test('JWKS outages fail closed and have a refresh cooldown', async () => {
   const h = await harness({ jwksStatus: 503 });
   try {
     for (let i = 0; i < 3; i++)
@@ -157,7 +157,7 @@ void test('JWKS outages fail closed and have a refresh cooldown', async () => {
   }
 });
 
-void test('publication guard and quotas preserve BOTH mappings and charged bytes', async () => {
+test('publication guard and quotas preserve BOTH mappings and charged bytes', async () => {
   const h = await harness();
   try {
     assert.equal((await h.store(bytes('A'), bytes('S'), bytes('old'))).status, 200);
@@ -209,7 +209,7 @@ void test('publication guard and quotas preserve BOTH mappings and charged bytes
   }
 });
 
-void test('large sequential R2 multipart stores and concurrent stores return coherent generations', async () => {
+test('large sequential R2 multipart stores and concurrent stores return coherent generations', async () => {
   const h = await harness();
   try {
     const blob = new Uint8Array(5 * 1024 * 1024 + 123).fill(37);
@@ -259,7 +259,7 @@ void test('large sequential R2 multipart stores and concurrent stores return coh
   }
 });
 
-void test('retention, retirement, abandoned uploads, and bounded cleanup protect replacements', async () => {
+test('retention, retirement, abandoned uploads, and bounded cleanup protect replacements', async () => {
   const h = await harness();
   try {
     const oldBlob = (
@@ -296,7 +296,7 @@ void test('retention, retirement, abandoned uploads, and bounded cleanup protect
   }
 });
 
-void test('rate admission uses bounded keys and precedes storage', async () => {
+test('rate admission uses bounded keys and precedes storage', async () => {
   const h = await harness({ readLimit: 1, storeLimit: 1 });
   try {
     assert.equal((await h.mf.dispatchFetch('https://cache.example.com/unknown-one')).status, 404);
@@ -311,7 +311,7 @@ void test('rate admission uses bounded keys and precedes storage', async () => {
   }
 });
 
-void test('malformed stores cannot publish and missing live value is a storage failure', async () => {
+test('malformed stores cannot publish and missing live value is a storage failure', async () => {
   const h = await harness();
   try {
     const metadata = encode({ key: bytes('A'), secondary_key: bytes('S'), value: bytes('V') });
@@ -351,7 +351,7 @@ void test('malformed stores cannot publish and missing live value is a storage f
   }
 });
 
-void test('configured field and streamed request limits return 413 without publication', async () => {
+test('configured field and streamed request limits return 413 without publication', async () => {
   const h = await harness({
     limits: {
       key: 8,

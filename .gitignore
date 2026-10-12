@@ -1,4 +1,5 @@
 .wrangler/
+.vitest/
 node_modules/
 dist/
 .env*

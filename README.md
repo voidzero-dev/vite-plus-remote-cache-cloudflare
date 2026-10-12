@@ -32,7 +32,7 @@ All responses disable caching. No CDN cache, R2 public URL, presigned URL, admin
 
 ## Local checks
 
-Use Node.js 22.12 or newer and the repository's pinned pnpm version. From the repository root:
+Use the Node.js version in `.node-version` and the repository's pinned pnpm version. The supported runtime range is Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. From the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -40,7 +40,11 @@ pnpm check
 pnpm smoke
 ```
 
-The repository created by the deployment button runs the same commands. `pnpm check` generates binding/runtime types and checks all source, operator, benchmark, and test files. `pnpm smoke` runs isolated workerd/D1/R2 tests and bundles a deployment dry run. Tests generate a temporary RSA key and intercept only GitHub's fixed JWKS URL. They need no Cloudflare account, GitHub credentials, or client adapter. CI runs them on Linux, macOS, and Windows.
+The repository created by the deployment button runs the same commands. `pnpm check` generates binding/runtime types, runs Vite+ formatting, lint, and type checks, and runs the existing TypeScript compiler check on all source, operator, benchmark, test, and Vite+ configuration files. `pnpm smoke` runs isolated workerd/D1/R2 tests with `vite-plus/test` and bundles a Wrangler deployment dry run. Tests generate a temporary RSA key and intercept only GitHub's fixed JWKS URL. They need no Cloudflare account, GitHub credentials, or client adapter. CI runs them on Linux, macOS, and Windows.
+
+Vite+ is pinned in `pnpm-workspace.yaml`; `vite.config.ts` configures formatting, linting, and tests. With the global CLI, use `vp install --frozen-lockfile`, `vp run check`, and `vp run smoke`. The `packageManager` field selects pnpm for Vite+ dependency commands. A global installation is optional: use `pnpm exec vp <command>` for the local CLI.
+
+`vp test run` runs the test suite once; `vp test` starts watch mode in an interactive terminal. `vp run <task>` runs a project script, so `vp run test` uses the one-shot test script and `vp run check` generates Worker types before checking. After generating types with `vp run types`, you can also run `vp check` directly. Use `vp run dev` for the Wrangler dev server and `vp run build` for the deployment dry run. The built-in `vp dev` and `vp build` run Vite and do not call these Wrangler scripts. This Worker keeps Wrangler's binding, scheduled-event, and deployment configuration.
 
 `pnpm dev` starts Wrangler with local bindings. Apply the local schema with `pnpm exec wrangler d1 migrations apply INDEX --local`. No namespace is enabled in the template. Use `pnpm test` for a fully initialized, isolated smoke test; it exercises authorized writes without creating a development signing-key bypass in production.
 
