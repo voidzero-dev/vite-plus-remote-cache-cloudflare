@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260911.1",
-    "@types/node": "25.0.3",
+    "@types/node": "25.9.9",
     "cborg": "6.1.2",
     "esbuild": "0.28.1",
     "jsonc-parser": "3.3.1",
