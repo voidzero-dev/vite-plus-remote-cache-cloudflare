@@ -6,4 +6,5 @@
 {
   "rolldown": "rolldown/rolldown",
   "vite-plus": "voidzero-dev/vite-plus",
+  "void": "voidzero-dev/void",
 }
