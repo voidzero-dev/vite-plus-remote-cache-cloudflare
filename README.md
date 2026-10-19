@@ -1,6 +1,6 @@
 # Vite+ remote cache for Cloudflare
 
-This repository is Vite+'s Cloudflare implementation of a remote cache server for `vp run`, designed in the [remote cache RFC](rfcs/0001-remote-cache.md) ([PR #716](https://github.com/voidzero-dev/vite-task/pull/716)): a TypeScript Worker, primary D1 metadata, and a private R2 Standard bucket. Anyone can read an enabled namespace. Only a signed GitHub Actions token for the registered public repository's main-branch `push` job can publish.
+This repository is Vite+'s Cloudflare implementation of a remote cache server for `vp run`, designed in the [remote cache RFC](rfcs/0001-remote-cache.md) ([PR #716](https://github.com/voidzero-dev/vite-task/pull/716)): a TypeScript Worker, primary D1 metadata, and a private R2 Standard bucket. Anyone can read an enabled namespace. Only a signed GitHub Actions token for the registered public repository's main-branch `push` job can publish, unless an operator opts the namespace in to [pull request uploads](#pull-request-uploads).
 
 The package contains no `vp run` client adapter. Cache keys, values, and blobs remain opaque. A successful lookup does not prove that a result is reusable; a client must validate its inputs and output archive.
 
@@ -76,7 +76,15 @@ For a deployment on Workers Paid, explicitly select `--profile paid` when you ne
 pnpm operator setup --name my-public-cache --namespace docs --repo owner/repository --origin https://cache.example.com --profile paid --retention-days 30 --byte-limit 30000000000
 ```
 
-Set GitHub Actions `id-token: write` only on the trusted publishing job. The token audience must equal the printed endpoint. No cache secret is needed in GitHub. A token with a customized `sub` can work because policy uses signed IDs, branch, visibility, and event claims. Tokens for fork repositories, tags, PRs, `pull_request_target`, or `workflow_run` are denied.
+Set GitHub Actions `id-token: write` only on the trusted publishing job. The token audience must equal the printed endpoint. No cache secret is needed in GitHub. A token with a customized `sub` can work because policy uses signed IDs, branch, visibility, and event claims. Tokens for fork repositories, tags, `pull_request_target`, or `workflow_run` are denied. PR tokens are denied too, unless the namespace opts in to pull request uploads.
+
+### Pull request uploads
+
+`pull_request` tokens are denied by default. As an interim measure, an operator can opt a namespace in with `pnpm operator policy --namespace docs --pull-requests on`, or pass `--pull-requests on` to the setup that creates the namespace. `--pull-requests off` withdraws the opt-in. An opted-in namespace accepts a `pull_request` token that passes the same audience, repository/owner ID, and visibility checks as a push and also has `ref` `refs/pull/<number>/merge`, `ref_type` `branch`, and a `base_ref` equal to the registered default branch. PRs that target another branch, `pull_request_target`, `workflow_run`, tags, and workflows in fork repositories remain denied.
+
+The opt-in carries a risk: PR entries share the namespace with default-branch entries. Code from any same-repository PR, including Renovate dependency branches, runs before review and can publish an entry that a later default-branch build restores. That is why it is off by default. The long-term fix is to [scope pull request uploads to the pull request](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/issues/16).
+
+Fork PR workflows run in the base repository, so their tokens carry its repository and owner IDs; the server cannot tell them from same-repository PRs. The policy depends on GitHub not granting `id-token: write` to fork PR workflows. GitHub grants write permissions to them only when the repository enables **Send write tokens to workflows from pull requests**, a setting [GitHub offers for private repositories only](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#enabling-workflows-for-forks-of-private-repositories). GitHub treats Dependabot PRs like fork PRs.
 
 ## Limits and authorization
 
@@ -99,7 +107,7 @@ Set GitHub Actions `id-token: write` only on the trusted publishing job. The tok
 
 The `LIMITS` Wrangler variable is a JSON object with optional keys `key`, `value`, `metadata`, `fetch`, `blob`, `store`, `headers`, and `deadlineMs`. It can lower the tested ceilings. Envelope limits must accommodate their field limits and framing. Raising ceilings requires code changes and new memory, CPU, and account-limit measurements. An HTTP request without `Content-Length` reserves the full store limit. Actual bytes replace that reservation only at publication; pending, retired, and deleting generations remain charged.
 
-GitHub authorization uses `jose`, `RS256`, the fixed issuer `https://token.actions.githubusercontent.com`, and its fixed HTTPS JWKS endpoint. The server checks exact string types for audience, repository/owner IDs, visibility, branch, ref type, and event. It requires integer `exp`, `nbf`, and `iat`, permits 30 seconds of skew for not-before/issued-at checks, accepts at most a 15-minute token lifetime, and never publishes after expiry. Token headers cannot supply signing-key URLs or embedded keys.
+GitHub authorization uses `jose`, `RS256`, the fixed issuer `https://token.actions.githubusercontent.com`, and its fixed HTTPS JWKS endpoint. The server checks exact string types for audience, repository/owner IDs, visibility, branch (`ref`, or `base_ref` for an opted-in pull request), ref type, and event. It requires integer `exp`, `nbf`, and `iat`, permits 30 seconds of skew for not-before/issued-at checks, accepts at most a 15-minute token lifetime, and never publishes after expiry. Token headers cannot supply signing-key URLs or embedded keys.
 
 Tokens are limited to 16 KiB. JWKS bodies are limited to 64 KiB, requests to five seconds, cached keys to ten minutes, and refresh attempts to one per 30 seconds per isolate, including failures. Unknown key IDs cannot cause unlimited refreshes. Missing usable keys fail closed. A maintainer's policy change increments its version; publication checks that version, current scope/deployment state, token expiry, lease, bytes, and identity quotas inside the D1 transaction.
 
@@ -112,6 +120,7 @@ pnpm operator status
 pnpm operator bind --namespace another-project --repo owner/another-repository
 pnpm operator bind --namespace docs --repo owner/repository
 pnpm operator policy --namespace docs --writes off
+pnpm operator policy --namespace docs --pull-requests on
 pnpm operator policy --namespace docs --enabled off
 pnpm operator policy --namespace docs --enabled on --writes on
 pnpm operator policy --namespace docs --retention-days 30 --byte-limit 30000000000
@@ -125,7 +134,7 @@ pnpm operator upgrade
 
 `status` reports policy, charged bytes, entry/association counts, generation states, cleanup eligibility, and actual D1 storage. It warns at 400 MB. Set provider alerts at 80% of request, CPU, R2 operation/storage, and D1 read/write/storage allowances. Monitor cleanup delay and pending bytes, and pause writes before a backlog reaches the storage ceiling. Public requests and other services in the same account can exhaust allowances even when this cache's byte budget is respected.
 
-Sampled structured logs include request ID, namespace, operation, exact/fallback/miss/error outcome, HTTP status, request/response sizes, duration, D1 rows/query latency/storage, and R2 operation attempts. Verified writes add signed repository ID, workflow ref, run ID/attempt, and commit SHA. They exclude tokens, keys, values, blobs, and database errors. `LOG_SAMPLE_RATE` defaults to `0.1` and applies to failures too. Provider transfer metrics account for disconnected downloads; logged response size describes the selected response. A server exact hit is distinct from a client-validated cache hit.
+Sampled structured logs include request ID, namespace, operation, exact/fallback/miss/error outcome, HTTP status, request/response sizes, duration, D1 rows/query latency/storage, and R2 operation attempts. Verified writes add signed repository ID, workflow ref, run ID/attempt, commit SHA, event name, and a pull request's head branch. They exclude tokens, keys, values, blobs, and database errors. `LOG_SAMPLE_RATE` defaults to `0.1` and applies to failures too. Provider transfer metrics account for disconnected downloads; logged response size describes the selected response. A server exact hit is distinct from a client-validated cache hit.
 
 ### Cleanup and withdrawal
 

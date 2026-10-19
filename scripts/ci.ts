@@ -199,11 +199,12 @@ async function deploy(settings: Settings): Promise<Deployment> {
             [scope, `${settings.origin}/projects/${scope}`],
           );
         // Recover policy changes left by an interrupted e2e run. These resources belong to CI only.
+        // PR runs check that pull request tokens cannot upload, so keep that opt-in off.
         await query(io, config, 'UPDATE deployment SET enabled = 1, writes_enabled = 1');
         await query(
           io,
           config,
-          `UPDATE scopes SET enabled = 1, writes_enabled = 1,
+          `UPDATE scopes SET enabled = 1, writes_enabled = 1, pull_requests = 0,
     byte_limit = 2000000000, entry_limit = 1000, association_limit = 2000`,
         );
       },

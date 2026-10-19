@@ -1,10 +1,15 @@
 // Public GitHub repositories served by the production remote cache.
 // Each key is a cache namespace. Its endpoint is
 // https://voidzero-remote-cache.<subdomain>.workers.dev/projects/<namespace>
-// Each production deployment enables every listed namespace and disables every other namespace,
-// overriding `pnpm operator policy`. Data in a removed namespace expires with its retention.
+// A value is "owner/repo", or { "repository": "owner/repo", "pullRequests": true } to also accept
+// uploads from same-repository pull_request runs that target the default branch. This interim
+// opt-in lets unreviewed PR code, including Renovate branches, publish entries that default-branch
+// builds restore. Read docs/e2e-plan.md#production-deployment before enabling it.
+// Each production deployment enables every listed namespace, disables every other namespace, and
+// sets each namespace's pull request opt-in from this list, overriding `pnpm operator policy`.
+// Data in a removed namespace expires with its retention.
 {
   "rolldown": "rolldown/rolldown",
   "vite-plus": "voidzero-dev/vite-plus",
-  "void": "voidzero-dev/void",
+  "void": { "repository": "voidzero-dev/void", "pullRequests": true },
 }

@@ -50,6 +50,8 @@ export interface WriteIdentity {
   run_id?: string;
   run_attempt?: string;
   sha?: string;
+  event_name?: string;
+  head_ref?: string;
 }
 
 export async function authorize(
@@ -121,22 +123,43 @@ export async function authorize(
   ) {
     throw new HttpError(401, 'invalid_token');
   }
+  // A `push` must update the registered branch. A namespace that opts in also accepts
+  // `pull_request` runs whose PR targets that branch. For those, GitHub signs `ref`
+  // `refs/pull/<number>/merge`, `ref_type` `branch`, and the target branch's short name (`main`)
+  // in `base_ref`. The `closed` run of a merged PR has the base branch in `ref` and is denied.
+  // Fork PR runs carry the base repository's IDs too; only GitHub withholding `id-token: write`
+  // from them keeps them out.
+  const event =
+    payload.event_name === 'push'
+      ? payload.ref === scope.branch
+      : payload.event_name === 'pull_request' &&
+        scope.pull_requests === 1 &&
+        typeof payload.ref === 'string' &&
+        /^refs\/pull\/[1-9][0-9]*\/merge$/.test(payload.ref) &&
+        typeof payload.base_ref === 'string' &&
+        `refs/heads/${payload.base_ref}` === scope.branch;
   if (
     !scope.writes_enabled ||
     payload.aud !== scope.endpoint ||
     payload.repository_id !== scope.repository_id ||
     payload.repository_owner_id !== scope.repository_owner_id ||
     payload.repository_visibility !== 'public' ||
-    payload.ref !== scope.branch ||
     payload.ref_type !== 'branch' ||
-    payload.event_name !== 'push'
+    !event
   ) {
     throw new HttpError(403, 'write_policy');
   }
   const identity: WriteIdentity = { exp, repository_id: scope.repository_id };
-  for (const name of ['workflow_ref', 'run_id', 'run_attempt', 'sha'] as const) {
+  for (const name of [
+    'workflow_ref',
+    'run_id',
+    'run_attempt',
+    'sha',
+    'event_name',
+    'head_ref',
+  ] as const) {
     const value = payload[name];
-    if (typeof value === 'string' && value.length <= 512) identity[name] = value;
+    if (typeof value === 'string' && value && value.length <= 512) identity[name] = value;
   }
   return identity;
 }

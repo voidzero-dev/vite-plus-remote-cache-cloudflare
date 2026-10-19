@@ -1,6 +1,6 @@
 # Deploy a remote cache for your GitHub repository
 
-This guide deploys the service in your Cloudflare account and gives your repository its own cache endpoint. You can bind any **public repository on GitHub.com**. Setup reads its default branch and permits uploads from GitHub Actions `push` jobs on that branch. All cache reads are public. Private repositories and other Git providers are not supported.
+This guide deploys the service in your Cloudflare account and gives your repository its own cache endpoint. You can bind any **public repository on GitHub.com**. Setup reads its default branch and permits uploads from GitHub Actions `push` jobs on that branch. You can also [allow pull request uploads](#allow-pull-request-uploads), with the risk described there. All cache reads are public. Private repositories and other Git providers are not supported.
 
 **Current status:** the server and operator CLI work in this source tree. The `vp run` remote-cache client adapter is not implemented here. You can deploy and verify the HTTP service now. Automatic task uploads and reuse require a compatible client; the proposed Vite+ settings are described separately below.
 
@@ -153,7 +153,7 @@ Inspect the deployed repository binding and storage state:
 pnpm operator status
 ```
 
-In `scopes`, confirm that `scope_id` is `web-app`, `repository` is your repository, `branch` matches its default branch, and `endpoint` matches the printed URL. `enabled` and `writes_enabled` should both be `1` for a new namespace. The deployment-level switches must also be enabled.
+In `scopes`, confirm that `scope_id` is `web-app`, `repository` is your repository, `branch` matches its default branch, and `endpoint` matches the printed URL. `enabled` and `writes_enabled` should both be `1` for a new namespace, and `pull_requests` should be `0` unless you [allowed pull request uploads](#allow-pull-request-uploads). The deployment-level switches must also be enabled.
 
 Check that an anonymous upload is rejected:
 
@@ -169,7 +169,7 @@ An empty cache also returns `404` for a valid lookup until an authorized client 
 
 A compatible client needs two settings: the complete namespace endpoint and whether it can upload. Developer machines and PR jobs can read without credentials. For uploads, the job must run in the bound public repository on a `push` to its registered default branch. Grant that job `id-token: write`; GitHub documents this [OIDC permission and custom audiences](https://docs.github.com/en/actions/reference/security/oidc).
 
-The client requests a GitHub OIDC token whose audience is the endpoint, then sends the token as `Authorization: Bearer <token>` to `/store`. `GITHUB_TOKEN`, personal access tokens, and Cloudflare API tokens are not accepted as cache upload credentials. PR, tag, and `workflow_dispatch` tokens cannot upload. A default branch named `master` works when that is the branch saved by setup.
+The client requests a GitHub OIDC token whose audience is the endpoint, then sends the token as `Authorization: Bearer <token>` to `/store`. `GITHUB_TOKEN`, personal access tokens, and Cloudflare API tokens are not accepted as cache upload credentials. Tag and `workflow_dispatch` tokens cannot upload. PR tokens cannot upload unless the namespace [allows pull request uploads](#allow-pull-request-uploads). A default branch named `master` works when that is the branch saved by setup.
 
 ### Proposed Vite+ configuration — client implementation required
 
@@ -198,7 +198,7 @@ env:
   VP_REMOTE_CACHE: read-write
 ```
 
-Keep the job's checkout, dependency installation, and `vp run` build steps. For PR builds, use `VP_REMOTE_CACHE: read` and omit `id-token: write`. The RFC also proposes `VP_REMOTE_CACHE: off` to disable remote caching. The URL is public and can be stored as a GitHub repository variable. No Cloudflare secrets or GitHub environment are required for application cache access.
+Keep the job's checkout, dependency installation, and `vp run` build steps. For PR builds, use `VP_REMOTE_CACHE: read` and omit `id-token: write`, unless the namespace [allows pull request uploads](#allow-pull-request-uploads). The RFC also proposes `VP_REMOTE_CACHE: off` to disable remote caching. The URL is public and can be stored as a GitHub repository variable. No Cloudflare secrets or GitHub environment are required for application cache access.
 
 ## Add or update repository bindings
 
@@ -227,6 +227,20 @@ pnpm operator policy --namespace web-app --enabled off
 
 Making the GitHub repository private does not withdraw previously published cache data. Use the operator to disable or purge the namespace. The [operations reference](../README.md#operations) covers retention changes, upgrades, backups, purge, and teardown.
 
+## Allow pull request uploads
+
+By default, only `push` jobs on the default branch can upload. As an interim measure, you can also accept uploads from `pull_request` runs in the bound repository whose PR targets that branch:
+
+```sh
+pnpm operator policy --namespace web-app --pull-requests on
+```
+
+For a new namespace, you can instead add `--pull-requests on` to its `setup` command. `--pull-requests off` withdraws the opt-in, and uploads already in progress then fail to publish. Same-repository PR jobs can then use the upload settings above, including `id-token: write`. PRs that target other branches, `pull_request_target`, `workflow_run`, tags, and workflows in fork repositories stay denied. The [authorization reference](../README.md#pull-request-uploads) lists the signed claims the server checks.
+
+Understand the risk before enabling it. PR entries share the namespace with default-branch entries. Code from any PR branch in your repository, including Renovate dependency branches, runs before review and can publish an entry that a later default-branch build restores. That is why the opt-in is off by default. The long-term fix, [scoping pull request uploads to the pull request](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/issues/16), is not implemented yet.
+
+Fork PR runs carry your repository's IDs, so the server cannot tell them from same-repository PR runs. It relies on GitHub not granting `id-token: write` to fork PR workflows. GitHub grants fork PR workflows write permissions only when **Send write tokens to workflows from pull requests** is enabled, a setting [it offers for private repositories only](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#enabling-workflows-for-forks-of-private-repositories).
+
 ## Troubleshooting
 
 | Symptom                               | Check                                                                                                |
@@ -235,7 +249,7 @@ Making the GitHub repository private does not withdraw previously published cach
 | Cloudflare API returns `403`          | Token permissions, account scope, and R2 activation                                                  |
 | Namespace requests return `404`       | Exact endpoint, namespace, and scope/deployment switches; fetch misses are also `404`                |
 | `/store` returns `401`                | Missing, invalid, or expired GitHub OIDC token                                                       |
-| `/store` returns `403`                | Token audience, repository/owner IDs, registered branch, `push` event, and write switch              |
+| `/store` returns `403`                | Token audience, repository/owner IDs, registered branch, `push` event or PR opt-in, and write switch |
 | `/store` returns `503`                | Quotas, concurrent uploads, storage availability, and policy changes; inspect `pnpm operator status` |
 | `vp run` does not contact the service | This source tree has no remote-cache client adapter; the RFC settings alone cannot add it            |
 

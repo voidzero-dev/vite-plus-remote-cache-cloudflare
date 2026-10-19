@@ -10,6 +10,8 @@ export interface Scope {
   branch: string;
   policy_version: number;
   writes_enabled: number;
+  // 1 when `pull_request` runs whose PR targets `branch` may also publish.
+  pull_requests: number;
 }
 export interface Generation {
   generation_id: string;

@@ -188,8 +188,18 @@ test('production deploys only manual default-branch runs from this repository', 
 
 test('production repository lists map namespaces to public owner/repo names', () => {
   assert.deepEqual(
-    parseRepositories('// comment\n{ "one": "acme/one", "two-x": "Acme/two.js", }'),
-    { one: 'acme/one', 'two-x': 'Acme/two.js' },
+    parseRepositories(
+      '// comment\n{ "one": "acme/one", "two-x": "Acme/two.js", ' +
+        '"three": { "repository": "acme/three", "pullRequests": true }, ' +
+        '"four": { "repository": "acme/four", "pullRequests": false }, "five": { "repository": "acme/five" }, }',
+    ),
+    {
+      one: { repository: 'acme/one', pullRequests: false },
+      'two-x': { repository: 'Acme/two.js', pullRequests: false },
+      three: { repository: 'acme/three', pullRequests: true },
+      four: { repository: 'acme/four', pullRequests: false },
+      five: { repository: 'acme/five', pullRequests: false },
+    },
   );
   for (const text of [
     '',
@@ -199,12 +209,19 @@ test('production repository lists map namespaces to public owner/repo names', ()
     '{ "-one": "acme/one" }',
     '{ "one": "https://github.com/acme/one" }',
     '{ "one": 1 }',
+    '{ "one": null }',
+    '{ "one": ["acme/one"] }',
+    '{ "one": {} }',
+    '{ "one": { "repository": "https://github.com/acme/one" } }',
+    '{ "one": { "repository": "acme/one", "pullRequests": "true" } }',
+    '{ "one": { "repository": "acme/one", "pullRequest": true } }',
     '{ "one": "acme/one" ',
   ])
     assert.throws(() => parseRepositories(text), /production repositor/i);
 });
 
-test('production deployments enable listed namespaces and disable all others', async () => {
+// The production prepare step against the harness database, with every other operator call refused.
+async function productionDatabase() {
   const h = await harness();
   const config = await readTemplate();
   config.d1_databases[0]!.database_id = database;
@@ -230,6 +247,13 @@ test('production deployments enable listed namespaces and disable all others', a
     lifecycle: unexpected,
     print: (message) => printed.push(message),
   };
+  const prepare = (repositories: string) =>
+    productionTarget(dispatch, production, repositories).prepare!(config, io);
+  return { h, printed, prepare };
+}
+
+test('production deployments enable listed namespaces and disable all others', async () => {
+  const { h, printed, prepare } = await productionDatabase();
   const policies = async () =>
     (
       await h.db
@@ -238,7 +262,6 @@ test('production deployments enable listed namespaces and disable all others', a
         )
         .all()
     ).results;
-  const target = productionTarget(dispatch, production, '{ "test": "owner/repo" }');
   const expected = [
     { scope_id: 'other', enabled: 0, writes_enabled: 0, policy_version: 2 },
     { scope_id: 'test', enabled: 1, writes_enabled: 1, policy_version: 3 },
@@ -247,15 +270,58 @@ test('production deployments enable listed namespaces and disable all others', a
     // A manual upload pause on a listed namespace lasts only until the next deployment.
     // The pause and its reversal each bump policy_version.
     await h.db.prepare("UPDATE scopes SET writes_enabled = 0 WHERE scope_id = 'test'").run();
-    await target.prepare!(config, io);
+    await prepare('{ "test": "owner/repo" }');
     assert.deepEqual(await policies(), expected);
     assert.deepEqual(printed, ['Disabled namespace other: it is not in the repository list']);
 
     // A deployment that changes no switch leaves in-flight uploads alone.
     printed.length = 0;
-    await target.prepare!(config, io);
+    await prepare('{ "test": "owner/repo" }');
     assert.deepEqual(await policies(), expected);
     assert.deepEqual(printed, []);
+  } finally {
+    await h.close();
+  }
+});
+
+test('production deployments accept pull request uploads only for opted-in namespaces', async () => {
+  const { h, printed, prepare } = await productionDatabase();
+  const policies = async () =>
+    (
+      await h.db
+        .prepare('SELECT scope_id, pull_requests, policy_version FROM scopes ORDER BY scope_id')
+        .all()
+    ).results;
+  const list =
+    '{ "test": { "repository": "owner/repo", "pullRequests": true }, "other": "owner/repo" }';
+  const expected = [
+    { scope_id: 'other', pull_requests: 0, policy_version: 3 },
+    { scope_id: 'test', pull_requests: 1, policy_version: 2 },
+  ];
+  try {
+    // A manual opt-in that the list doesn't make lasts only until the next deployment.
+    // Each switch bumps policy_version, which stops uploads admitted under the old policy.
+    await h.db.prepare("UPDATE scopes SET pull_requests = 1 WHERE scope_id = 'other'").run();
+    await prepare(list);
+    assert.deepEqual(await policies(), expected);
+    assert.deepEqual(printed.sort(), [
+      'Disabled pull request uploads for namespace other',
+      'Enabled pull request uploads for namespace test',
+    ]);
+
+    printed.length = 0;
+    await prepare(list);
+    assert.deepEqual(await policies(), expected);
+    assert.deepEqual(printed, []);
+
+    // Switching back to the string form withdraws the opt-in.
+    printed.length = 0;
+    await prepare('{ "test": "owner/repo", "other": "owner/repo" }');
+    assert.deepEqual(await policies(), [
+      { scope_id: 'other', pull_requests: 0, policy_version: 3 },
+      { scope_id: 'test', pull_requests: 0, policy_version: 3 },
+    ]);
+    assert.deepEqual(printed, ['Disabled pull request uploads for namespace test']);
   } finally {
     await h.close();
   }
