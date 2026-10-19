@@ -116,6 +116,8 @@ export default {
                 run_id: identity.run_id,
                 run_attempt: identity.run_attempt,
                 sha: identity.sha,
+                event_name: identity.event_name,
+                head_ref: identity.head_ref,
               }
             : {}),
         }),

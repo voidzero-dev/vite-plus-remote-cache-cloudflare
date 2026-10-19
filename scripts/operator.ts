@@ -228,6 +228,7 @@ export async function runOperator(
       'association-limit': { type: 'string' },
       enabled: { type: 'string' },
       writes: { type: 'string' },
+      'pull-requests': { type: 'string' },
       confirm: { type: 'string' },
       help: { type: 'boolean' },
     },
@@ -257,6 +258,7 @@ export async function runOperator(
     throw new Error('Retention cannot exceed 365 days');
   toggle(values.enabled);
   toggle(values.writes);
+  toggle(values['pull-requests']);
   if (command === 'setup') {
     const name = identifier(values.name);
     if (name.length < 3 || name.endsWith('-'))
@@ -328,8 +330,8 @@ export async function runOperator(
     await query(
       io,
       config,
-      `INSERT INTO scopes (scope_id, endpoint, repository, repository_id, repository_owner_id, branch, retention_seconds, byte_limit, entry_limit, association_limit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope_id) DO NOTHING`,
+      `INSERT INTO scopes (scope_id, endpoint, repository, repository_id, repository_owner_id, branch, pull_requests, retention_seconds, byte_limit, entry_limit, association_limit)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope_id) DO NOTHING`,
       [
         namespace,
         `${origin.origin}/projects/${namespace}`,
@@ -337,6 +339,7 @@ export async function runOperator(
         repo.id,
         repo.owner,
         repo.branch,
+        toggle(values['pull-requests']) ?? 0,
         positive(values['retention-days'], 7) * 86400,
         positive(values['byte-limit'], 8000000000),
         positive(values['entry-limit'], 20000),
@@ -516,11 +519,12 @@ export async function runOperator(
     io,
     config,
     `UPDATE scopes SET enabled = coalesce(?, enabled), writes_enabled = coalesce(?, writes_enabled),
-    retention_seconds = coalesce(?, retention_seconds), byte_limit = coalesce(?, byte_limit), entry_limit = coalesce(?, entry_limit),
+    pull_requests = coalesce(?, pull_requests), retention_seconds = coalesce(?, retention_seconds), byte_limit = coalesce(?, byte_limit), entry_limit = coalesce(?, entry_limit),
     association_limit = coalesce(?, association_limit), policy_version = policy_version + 1 WHERE scope_id = ?`,
     [
       toggle(values.enabled),
       toggle(values.writes),
+      toggle(values['pull-requests']),
       values['retention-days'] ? positive(values['retention-days'], 7) * 86400 : null,
       optionalPositive(values['byte-limit']),
       optionalPositive(values['entry-limit']),
