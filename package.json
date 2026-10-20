@@ -21,7 +21,7 @@
     "jose": "6.2.12"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260911.1",
+    "@cloudflare/workers-types": "5.20261019.1",
     "@types/node": "25.0.3",
     "cborg": "6.1.2",
     "esbuild": "0.28.1",
