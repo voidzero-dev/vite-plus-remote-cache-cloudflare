@@ -1,3 +1,4 @@
+# Deploy to Cloudflare copies this repository, including this file.
 packages:
   - .
 
