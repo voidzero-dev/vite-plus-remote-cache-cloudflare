@@ -27,7 +27,7 @@
     "esbuild": "0.28.1",
     "jsonc-parser": "3.3.1",
     "miniflare": "5.20260911.0-alpha",
-    "tsx": "4.23.13",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vite-plus": "catalog:",
     "wrangler": "4.131.1"
