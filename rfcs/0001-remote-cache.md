@@ -25,7 +25,7 @@ PR #713 defines the HTTP contract. This RFC defines the Cloudflare storage, auth
 | Data           | CBOR envelope; opaque binary keys and values; optional opaque blob                                                                      |
 | Lookup         | Exact key first, then one secondary-key association                                                                                     |
 | Store          | Replace the entry and secondary association together after object storage succeeds                                                      |
-| Access control | Anonymous reads; GitHub OIDC writes restricted to the registered repository and main-branch push events                                 |
+| Access control | Anonymous reads; GitHub OIDC writes from the registered repository's main-branch pushes and, by interim opt-in, its PRs to main         |
 | Transfer       | One multipart HTTP store request; internal R2 multipart upload for larger blobs                                                         |
 | Client mode    | `--remote-cache` or `VP_REMOTE_CACHE` selects `off`, `read`, or `read-write`; defaults to `read` with an endpoint and `off` without one |
 | Defaults       | Seven-day retention, 8 GB total R2 budget, 64 MiB maximum blob                                                                          |
@@ -180,7 +180,7 @@ Use `VP_REMOTE_CACHE_URL` to override the endpoint on a host. Without an endpoin
 
 Task-level `remoteCache: false` excludes remote reads and uploads but retains local caching. `cache: false`, `--no-cache`, and tool-requested cache disabling also prevent uploads. The remote cache mode does not override these exclusions.
 
-Version 1 uploads require GitHub Actions OIDC authorization for a main-branch push job. Enable uploads in that job with `VP_REMOTE_CACHE=read-write` or `--remote-cache=read-write`.
+Version 1 uploads require GitHub Actions OIDC authorization for a main-branch push job, or, with the [interim pull request opt-in](#interim-pull-request-opt-in), a same-repository PR job that targets the main branch. Enable uploads in that job with `VP_REMOTE_CACHE=read-write` or `--remote-cache=read-write`.
 
 ### Upload lifecycle
 
@@ -248,7 +248,7 @@ These conditions use [GitHub's documented claims](https://docs.github.com/en/act
 
 GitHub supports different subject formats. Repository IDs and branch/event claims avoid dependence on one text format for `sub`. A write grant for an organization or repository does not replace the complete set of checks.
 
-A `pull_request_target` job can run in the base repository's default-branch context. Thus, `ref=refs/heads/main` alone cannot authorize writes. Version 1 denies `pull_request`, `pull_request_target`, `workflow_run`, tags, branches other than main, and all other event types.
+A `pull_request_target` job can run in the base repository's default-branch context. Thus, `ref=refs/heads/main` alone cannot authorize writes. Version 1 denies `pull_request` (except under the interim opt-in below), `pull_request_target`, `workflow_run`, tags, branches other than main, and all other event types.
 
 Fork repositories have different IDs. They cannot write to the upstream namespace, even from their own `main` branch. Reusable workflows must have matching repository, branch, and event claims for the caller. The called workflow's identity alone grants no permission. See GitHub's [workflow event behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
 
@@ -256,12 +256,19 @@ Fork repositories have different IDs. They cannot write to the upstream namespac
 | --------------------------------------------------------------------------------- | ----------------------------- | ----------------------------- | ------------- |
 | Anonymous developer or fork contributor                                           | Allow                         | Allow                         | `401`         |
 | Registered repository, public, main-branch push, valid audience/token             | Allow                         | Allow                         | Allow         |
+| Same-repository PR that targets main, namespace opted in, valid audience/token    | Allow                         | Allow                         | Allow         |
 | Valid GitHub token with wrong repo, owner, visibility, branch, event, or audience | Allow                         | Allow                         | `403`         |
 | Invalid, expired, or forged token                                                 | Allow without using the token | Allow without using the token | `401`         |
 
 A local command cannot obtain write permission through environment variables alone. Unknown or disabled namespaces expose no cache data. Apply the namespace restriction to every exact, fallback, and blob lookup and every mutation. Return `404` for a blob ID from another namespace.
 
 This separation prevents results from different projects from mixing. All enabled version 1 namespaces remain public. Keep the R2 bucket private so reads pass through Worker routing, retention checks, and budgets. Apply the same store verifier to every exposed route and alias.
+
+#### Interim pull request opt-in
+
+An operator can opt a namespace in to `pull_request` tokens. The opt-in is off by default and stored with the namespace policy; changing it invalidates pending uploads like any other policy change. For an opted-in namespace, a token with `event_name` `pull_request` passes when the issuer, audience, repository, owner, visibility, and time checks above pass, `ref` is `refs/pull/<number>/merge`, `ref_type` is `branch`, and `base_ref` is the configured main branch's short name, such as `main`. GitHub signs these values for a PR's merge-branch run; see its [OIDC claims](https://docs.github.com/en/actions/reference/security/oidc) and [`GITHUB_REF` for `pull_request`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request). PRs that target other branches, `pull_request_target`, `workflow_run`, tags, and workflows in fork repositories remain denied.
+
+This exception weakens the publication trust model below. PR code, including dependency-update branches such as Renovate's, runs before review and can publish into the namespace that main-branch builds restore from. Fork PR runs carry the base repository's IDs, so only GitHub's refusal to grant `id-token: write` to fork PR workflows keeps them out. The long-term design gives pull request uploads their own scope ([issue #16](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/issues/16)).
 
 ### Publication trust and revocation
 
@@ -547,7 +554,7 @@ jobs:
           DOCS_SITE_ORIGIN: ${{ vars.DOCS_SITE_ORIGIN }}
 ```
 
-The Worker checks signed repository, branch, and event claims. PR workflows use the default `read` mode with the same command and endpoint, and omit `id-token: write`.
+The Worker checks signed repository, branch, and event claims. PR workflows use the default `read` mode with the same command and endpoint, and omit `id-token: write`, unless the namespace has the [interim pull request opt-in](#interim-pull-request-opt-in).
 
 A workflow that handles both main-branch pushes and PRs can select the mode once for all run commands:
 

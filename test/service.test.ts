@@ -146,6 +146,67 @@ test('signed GitHub policy denies forks, wrong owners, private repos, non-push e
   }
 });
 
+test('pull request tokens publish only to opted-in namespaces from PRs that target the default branch', async () => {
+  const h = await harness();
+  // Claims GitHub signs for a same-repository `pull_request` run.
+  const pr = {
+    event_name: 'pull_request',
+    ref: 'refs/pull/27/merge',
+    ref_type: 'branch',
+    base_ref: 'main',
+    head_ref: 'renovate/vite-plus',
+  };
+  const status = async (claims: Record<string, unknown>, scope = 'test') =>
+    (
+      await h.store(bytes('A'), bytes('S'), bytes('V'), undefined, {
+        scope,
+        token: await h.token({ aud: `https://cache.example.com/projects/${scope}`, ...claims }),
+      })
+    ).status;
+  try {
+    assert.equal(await status(pr), 403);
+    await h.db.prepare("UPDATE scopes SET pull_requests = 1 WHERE scope_id = 'test'").run();
+    assert.equal(await status(pr), 200);
+    // Namespaces without the opt-in keep the default-branch push policy.
+    assert.equal(await status(pr, 'other'), 403);
+    assert.equal(await status({}, 'other'), 200);
+    for (const claims of [
+      { base_ref: 'feature' },
+      { base_ref: 'refs/heads/main' },
+      { base_ref: '' },
+      { base_ref: undefined },
+      // The `closed` run of a merged PR carries the base branch in `ref`.
+      { ref: 'refs/heads/main' },
+      { ref: 'refs/pull/27/head' },
+      { ref: 'refs/pull/27/merge/x' },
+      { ref_type: 'tag' },
+      { event_name: 'push' },
+      { event_name: 'pull_request_target', ref: 'refs/heads/main' },
+      { event_name: 'workflow_run', ref: 'refs/heads/main' },
+      { repository_id: '999' },
+      { repository_owner_id: '999' },
+      { repository_visibility: 'private' },
+      { aud: 'https://attacker.example' },
+    ])
+      assert.equal(await status({ ...pr, ...claims }), 403, JSON.stringify(claims));
+    // Push tokens are unaffected by the opt-in.
+    assert.equal(await status({}), 200);
+    assert.equal(await status({ ref: 'refs/heads/feature' }), 403);
+    // Turning the opt-in off also stops PR uploads that were already admitted.
+    const admitted = await reserve(
+      h.db,
+      await getScope(h.db, 'test'),
+      Math.floor(Date.now() / 1000) + 300,
+      100,
+    );
+    await h.db.prepare("UPDATE scopes SET pull_requests = 0 WHERE scope_id = 'test'").run();
+    await assert.rejects(publish(h.db, admitted, bytes('B'), bytes('T')), { status: 503 });
+    assert.equal(await status(pr), 403);
+  } finally {
+    await h.close();
+  }
+});
+
 test('JWKS outages fail closed and have a refresh cooldown', async () => {
   const h = await harness({ jwksStatus: 503 });
   try {

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath, URL } from 'node:url';
 import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
@@ -77,14 +77,16 @@ export async function harness(
   try {
     const db = await mf.getD1Database('INDEX');
     const bucket = await mf.getR2Bucket('ARTIFACTS');
-    const migration = await readFile(
-      new URL('../migrations/0001_cache.sql', import.meta.url),
-      'utf8',
-    );
-    // Preserve complete trigger bodies. Each prepared statement is a real D1 migration statement.
-    const statements = migration.match(
-      /CREATE TRIGGER[\s\S]*?\nEND;|(?:CREATE TABLE|CREATE (?:UNIQUE )?INDEX|INSERT INTO)[\s\S]*?;/g,
-    )!;
+    // Apply every migration in order, like `wrangler d1 migrations apply`. Preserve complete
+    // trigger bodies. Each prepared statement is a real D1 migration statement.
+    const migrations = new URL('../migrations/', import.meta.url);
+    const statements: string[] = [];
+    for (const name of (await readdir(migrations)).filter((file) => file.endsWith('.sql')).sort())
+      statements.push(
+        ...(await readFile(new URL(name, migrations), 'utf8')).match(
+          /CREATE TRIGGER[\s\S]*?\nEND;|(?:CREATE TABLE|CREATE (?:UNIQUE )?INDEX|INSERT INTO|ALTER TABLE|DROP TRIGGER)[\s\S]*?;/g,
+        )!,
+      );
     const migrate = () => db.batch(statements.map((sql) => db.prepare(sql)));
     if (options.initializeDatabase !== false) {
       await migrate();
