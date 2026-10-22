@@ -18,7 +18,7 @@
     "e2e": "node --import tsx scripts/ci.ts test"
   },
   "dependencies": {
-    "jose": "6.2.12"
+    "jose": "6.2.13"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261019.1",
