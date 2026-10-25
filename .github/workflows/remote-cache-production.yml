@@ -23,13 +23,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
-      - run: pnpm check
-      - run: pnpm smoke
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          cache: true
+          cache-save: ${{ github.ref_name == (github.event.repository.default_branch || 'main') }}
+          run-install: |
+            - args: ['--frozen-lockfile', '--ignore-scripts']
+      - run: vp run check
+      - run: vp run smoke
       # The script accepts only manual runs of this repository's main branch.
       - name: Deploy the production Worker, D1, and R2
         id: deploy
-        run: pnpm ci:deploy production
+        run: vp run ci:deploy production
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -14,17 +14,19 @@ concurrency:
 
 jobs:
   check:
-    name: Check (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: Check (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: oxc-project/setup-node@f46a72f95efdc55273fcd042d61c84e723b2892c # v1.4.1
-      - run: pnpm check
-      - run: pnpm smoke
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version-file: .node-version
+          cache: true
+          cache-save: ${{ github.ref_name == (github.event.repository.default_branch || 'main') }}
+          run-install: |
+            - args: ['--frozen-lockfile', '--ignore-scripts']
+      - run: vp run check
+      - run: vp run smoke
