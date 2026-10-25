@@ -8,7 +8,7 @@ The [self-hosting quick start](self-hosting.md#quick-start-deploy-to-cloudflare)
 
 Automated regression checks cover independently named resources, an empty D1 database, repository binding, optional Paid cleanup batches, retries from a clean checkout, preserved withdrawal and quotas, rejected repository reassignment, missing storage, and placeholder IDs. Post-deployment HTTP checks require the current deployment ID and `Cache-Control: no-store`. They check an anonymous upload (`401`), malformed fetch (`400`), and a valid cache miss (`404`). A disabled namespace must continue to return `404`. Polling allows for route/revision propagation and fails the build if checks never pass. These checks do not publish data or validate authorized uploads.
 
-Linux, macOS, and Windows CI also install with the frozen lockfile, check types, run the tests, and bundle the Worker, as the repository created by the button does.
+Linux CI also installs with the frozen lockfile, checks types, runs the tests, and bundles the Worker, as the repository created by the button does.
 
 Before releasing the button, complete this live acceptance exercise in a dedicated account or with dedicated test resources:
 
@@ -26,7 +26,7 @@ Local tests cannot prove the Cloudflare setup form, resource provisioning, build
 
 `.github/workflows/remote-cache-deploy.yml` runs for every PR and push to `main`. It also supports manual runs from the default branch.
 
-1. Check the exact source commit with `pnpm check` and `pnpm smoke`.
+1. Check the exact source commit with `vp run check` and `vp run smoke`.
 2. Create or update the shared staging Worker, D1 database, and R2 bucket. Apply D1 migrations.
 3. Check that the R2 bucket has no public domain. Seed public test fixtures through the authenticated operator API.
 4. Run smoke tests against the deployed HTTP endpoints. Every response must identify the expected commit and workflow attempt through `X-Remote-Cache-Deployment`.
@@ -74,13 +74,13 @@ GitHub can suppress `pull_request` workflows when a PR has merge conflicts. Reso
 
 The production write policy requires a real GitHub token with `event_name=push`, the registered repository and owner IDs, its configured main branch, and the exact namespace audience. A `workflow_dispatch` token cannot pass this policy, and neither can a PR token unless its namespace opts in to [pull request uploads](../README.md#pull-request-uploads). Staging keeps that opt-in off, so PR runs keep checking that PR tokens are rejected. GitHub signs the event claim; the test runner cannot change it.
 
-| Level                        | Trigger                                     | What it proves                                                                                                                           |
-| ---------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Local regression             | Every normal CI run, on Linux/macOS/Windows | Protocol, storage state transitions, failures, and the e2e driver against workerd/D1/R2 emulators                                        |
-| PR staging smoke tests       | Related changes in an internal PR           | Deployment revision, migrations, private R2, real public HTTP reads, real rejected OIDC writes, policy changes, and expiry               |
-| Main staging smoke tests     | Related push to `main`                      | All PR cases plus real authorized HTTP writes, multipart uploads, replacement, concurrency, and quota checks                             |
-| Manual staging smoke tests   | Default-branch workflow dispatch            | The same public-read and rejected-write checks as PR runs                                                                                |
-| Release / incident exercises | Maintainer-controlled staging session       | Maximum payloads, real Cron, long-running limits, provider outages, lifecycle delays, restore, rollback, and hostile workflow identities |
+| Level                        | Trigger                               | What it proves                                                                                                                           |
+| ---------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Local regression             | Every normal CI run, on Linux         | Protocol, storage state transitions, failures, and the e2e driver against workerd/D1/R2 emulators                                        |
+| PR staging smoke tests       | Related changes in an internal PR     | Deployment revision, migrations, private R2, real public HTTP reads, real rejected OIDC writes, policy changes, and expiry               |
+| Main staging smoke tests     | Related push to `main`                | All PR cases plus real authorized HTTP writes, multipart uploads, replacement, concurrency, and quota checks                             |
+| Manual staging smoke tests   | Default-branch workflow dispatch      | The same public-read and rejected-write checks as PR runs                                                                                |
+| Release / incident exercises | Maintainer-controlled staging session | Maximum payloads, real Cron, long-running limits, provider outages, lifecycle delays, restore, rollback, and hostile workflow identities |
 
 The runner obtains tokens directly from GitHub with `id-token: write`. It checks the token request host, rejects redirects, bounds responses, and caches each audience separately for three minutes. Tokens remain in memory. Reports and artifacts contain no GitHub or Cloudflare credentials. The Worker has no alternate issuer, test signing key, administrative HTTP endpoint, or weakened write policy.
 
@@ -173,7 +173,7 @@ Staging policies belong to CI. Do not use these names for an operator-managed pr
 
 `.github/workflows/remote-cache-production.yml` deploys this repository's production cache. It runs only when a maintainer starts it from **Actions → Remote cache production → Run workflow** on `main`. Pushes and PRs never deploy production. Before starting it, check that the commit's main-branch staging run passed.
 
-The workflow repeats `pnpm check` and `pnpm smoke`, then runs `pnpm ci:deploy production`. `scripts/ci/production.ts` names the Worker, D1 database, and R2 bucket. `.github/production-repositories.jsonc` maps each cache namespace to a public GitHub repository. The command refuses other repositories, branches, and events, so repositories created by Deploy to Cloudflare cannot run it. Staging and production share `scripts/ci/deploy.ts`. Setup creates or reuses the named resources, applies migrations, and binds each namespace; then the Worker deploys once. Every namespace endpoint must then serve the new deployment ID. The run summary and the `production` environment list the endpoints, for example `https://voidzero-remote-cache.<subdomain>.workers.dev/projects/rolldown`.
+The workflow repeats `vp run check` and `vp run smoke`, then runs `vp run ci:deploy production`. `scripts/ci/production.ts` names the Worker, D1 database, and R2 bucket. `.github/production-repositories.jsonc` maps each cache namespace to a public GitHub repository. The command refuses other repositories, branches, and events, so repositories created by Deploy to Cloudflare cannot run it. Staging and production share `scripts/ci/deploy.ts`. Setup creates or reuses the named resources, applies migrations, and binds each namespace; then the Worker deploys once. Every namespace endpoint must then serve the new deployment ID. The run summary and the `production` environment list the endpoints, for example `https://voidzero-remote-cache.<subdomain>.workers.dev/projects/rolldown`.
 
 To bind another repository, add `"namespace": "owner/repository"` to `.github/production-repositories.jsonc`, merge the change, and run the workflow. Only public repositories can publish. The list decides which namespaces serve reads and accept uploads: each deployment enables every listed namespace and disables every other namespace, so a `pnpm operator policy` change lasts only until the next deployment. To withdraw a repository, remove its entry and run the workflow. For an immediate stop, also run `pnpm operator policy --namespace <namespace> --enabled off`. Data in a disabled namespace expires with its retention; `pnpm operator purge` deletes it sooner. Deployments never change the cache-wide `pnpm operator deployment` switches or move a namespace to another repository. To roll back, re-run an earlier successful production run. A re-run deploys its original commit.
 
