@@ -236,7 +236,7 @@ export async function runOperator(
   const command = positionals[0];
   if (values.help || !command) {
     io.print(
-      'Commands: setup, bind, policy, deployment, status, upgrade, purge, teardown. See README.md for options.',
+      'Commands: setup, bind, policy, deployment, status, upgrade, purge, teardown. See docs/README.md for options.',
     );
     return;
   }

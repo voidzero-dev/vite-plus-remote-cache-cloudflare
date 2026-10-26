@@ -163,7 +163,7 @@ curl --include --request POST https://acme-build-cache.my-team.workers.dev/proje
 
 Expect HTTP `401` with the plain-text body `Invalid credentials`. Use `curl.exe` in Windows PowerShell. The service has no landing page at `/`; a browser visit there returns `404`.
 
-An empty cache also returns `404` for a valid lookup until an authorized client publishes an entry. A complete integration check must upload from a permitted GitHub Actions job, fetch the same entry without credentials, and compare the returned value and blob. The [HTTP protocol reference](../README.md#protocol) defines those requests. The [e2e plan](e2e-plan.md) describes the project's separate shared staging checks.
+An empty cache also returns `404` for a valid lookup until an authorized client publishes an entry. A complete integration check must upload from a permitted GitHub Actions job, fetch the same entry without credentials, and compare the returned value and blob. The [HTTP protocol reference](README.md#protocol) defines those requests. The [e2e plan](e2e-plan.md) describes the project's separate shared staging checks.
 
 ## 5. Connect your application build
 
@@ -225,7 +225,7 @@ pnpm operator policy --namespace web-app --writes off
 pnpm operator policy --namespace web-app --enabled off
 ```
 
-Making the GitHub repository private does not withdraw previously published cache data. Use the operator to disable or purge the namespace. The [operations reference](../README.md#operations) covers retention changes, upgrades, backups, purge, and teardown.
+Making the GitHub repository private does not withdraw previously published cache data. Use the operator to disable or purge the namespace. The [operations reference](README.md#operations) covers retention changes, upgrades, backups, purge, and teardown.
 
 ## Allow pull request uploads
 
@@ -235,7 +235,7 @@ By default, only `push` jobs on the default branch can upload. As an interim mea
 pnpm operator policy --namespace web-app --pull-requests on
 ```
 
-For a new namespace, you can instead add `--pull-requests on` to its `setup` command. `--pull-requests off` withdraws the opt-in, and uploads already in progress then fail to publish. Same-repository PR jobs can then use the upload settings above, including `id-token: write`. PRs that target other branches, `pull_request_target`, `workflow_run`, tags, and workflows in fork repositories stay denied. The [authorization reference](../README.md#pull-request-uploads) lists the signed claims the server checks.
+For a new namespace, you can instead add `--pull-requests on` to its `setup` command. `--pull-requests off` withdraws the opt-in, and uploads already in progress then fail to publish. Same-repository PR jobs can then use the upload settings above, including `id-token: write`. PRs that target other branches, `pull_request_target`, `workflow_run`, tags, and workflows in fork repositories stay denied. The [authorization reference](README.md#pull-request-uploads) lists the signed claims the server checks.
 
 Understand the risk before enabling it. PR entries share the namespace with default-branch entries. Code from any PR branch in your repository, including Renovate dependency branches, runs before review and can publish an entry that a later default-branch build restores. That is why the opt-in is off by default. The long-term fix, [scoping pull request uploads to the pull request](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/issues/16), is not implemented yet.
 
