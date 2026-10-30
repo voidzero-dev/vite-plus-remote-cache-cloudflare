@@ -23,7 +23,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261019.1",
     "@types/node": "26.6.6",
-    "cborg": "6.1.5",
+    "cborg": "6.2.1",
     "esbuild": "0.28.2",
     "jsonc-parser": "3.3.1",
     "miniflare": "5.20260911.0-alpha",
