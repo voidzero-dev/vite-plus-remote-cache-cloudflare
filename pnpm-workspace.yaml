@@ -1,6 +1,12 @@
 packages:
   - .
 
+minimumReleaseAgeExclude:
+  - '@cloudflare/*'
+  - miniflare
+  - workerd
+  - wrangler
+
 allowBuilds:
   esbuild: true
   workerd: true
