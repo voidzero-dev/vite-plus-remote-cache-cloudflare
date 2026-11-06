@@ -6,7 +6,7 @@
       "groupName": "vite-plus monorepo",
       "matchPackageNames": [
         "vite-plus",
-        "@voidzero-dev/vite-plus-core",
+        "@voidzero-dev/*",
         "vitest",
         "@vitest/**"
       ]
