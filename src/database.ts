@@ -26,6 +26,10 @@ export interface Selection extends Generation {
   kind: 'exact' | 'fallback';
   key: number[];
 }
+export type Entries =
+  | { kind: 'exact'; entries: Generation[] }
+  | { kind: 'fallback'; key: Uint8Array }
+  | null;
 
 // Preserve empty and non-UTF-8 keys as BLOBs, without text or hash conversions.
 export function binary(bytes: Uint8Array): ArrayBuffer {
@@ -51,39 +55,49 @@ export async function getScope(db: D1Database, id: string, stats?: Observations)
   return scope;
 }
 
-export async function selectEntry(
+export async function selectEntries(
   db: D1Database,
   scope: string,
   key: Uint8Array,
   secondary: Uint8Array,
   stats?: Observations,
-): Promise<Selection | null> {
-  // Both branches use indexed identities in one SQLite snapshot.
+): Promise<Entries> {
+  // One statement reads the key's newest live entries and the association in one SQLite snapshot.
+  // The association is used only when the key has no live entry.
+  let results: Selection[];
   try {
-    const { results } = await measured(
+    ({ results } = await measured(
       db
         .prepare(`
-      SELECT g.*, e.key, 'exact' AS kind, 0 AS priority
-      FROM entries e JOIN generations g ON g.generation_id = e.generation_id
-      JOIN scopes s ON s.scope_id = e.scope_id CROSS JOIN deployment d
-      WHERE e.scope_id = ?1 AND e.key = ?2 AND g.state = 'ready' AND g.expires_at > unixepoch()
-        AND s.enabled = 1 AND d.enabled = 1
+      SELECT * FROM (
+        SELECT g.*, e.key, 'exact' AS kind, 0 AS priority, e.seq
+        FROM entries e JOIN generations g ON g.generation_id = e.generation_id
+        JOIN scopes s ON s.scope_id = e.scope_id CROSS JOIN deployment d
+        WHERE e.scope_id = ?1 AND e.key = ?2 AND g.state = 'ready' AND g.expires_at > unixepoch()
+          AND s.enabled = 1 AND d.enabled = 1
+        ORDER BY e.seq DESC
+        LIMIT (SELECT entries_per_key FROM scopes WHERE scope_id = ?1))
       UNION ALL
-      SELECT g.*, e.key, 'fallback' AS kind, 1 AS priority
-      FROM associations a JOIN entries e ON e.scope_id = a.scope_id AND e.key = a.target_key
-      JOIN generations g ON g.generation_id = e.generation_id
-      JOIN scopes s ON s.scope_id = e.scope_id CROSS JOIN deployment d
-      WHERE a.scope_id = ?1 AND a.secondary_key = ?3 AND g.state = 'ready' AND g.expires_at > unixepoch()
-        AND s.enabled = 1 AND d.enabled = 1
-      ORDER BY priority LIMIT 1`)
+      SELECT * FROM (
+        SELECT g.*, e.key, 'fallback' AS kind, 1 AS priority, e.seq
+        FROM associations a JOIN entries e ON e.scope_id = a.scope_id AND e.key = a.target_key
+        JOIN generations g ON g.generation_id = e.generation_id
+        JOIN scopes s ON s.scope_id = e.scope_id CROSS JOIN deployment d
+        WHERE a.scope_id = ?1 AND a.secondary_key = ?3 AND g.state = 'ready' AND g.expires_at > unixepoch()
+          AND s.enabled = 1 AND d.enabled = 1
+        LIMIT 1)
+      ORDER BY priority, seq DESC`)
         .bind(scope, binary(key), binary(secondary))
         .all<Selection>(),
       stats,
-    );
-    return results[0] ?? null;
+    ));
   } catch {
     unavailable();
   }
+  const exact = results.filter((row) => row.kind === 'exact');
+  if (exact.length) return { kind: 'exact', entries: exact };
+  const fallback = results[0];
+  return fallback ? { kind: 'fallback', key: new Uint8Array(fallback.key) } : null;
 }
 
 export async function selectBlob(

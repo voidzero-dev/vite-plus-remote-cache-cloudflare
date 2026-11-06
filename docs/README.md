@@ -12,19 +12,19 @@ The package contains no `vp run` client adapter. Cache keys, values, and blobs r
 
 The endpoint is `https://<host>/projects/<namespace>`. Namespaces use 1–63 lowercase letters, digits, or hyphens, starting with a letter or digit. An operator can register up to 100 namespaces per deployment.
 
-| Request                                                                   | Success                                                                                                |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `POST /fetch`, `application/cbor`, `{ key: bytes, secondary_key: bytes }` | CBOR `{ kind: "exact", value: bytes, blob_id: string \| null }`, or `{ kind: "fallback", key: bytes }` |
-| `GET /blob/{blob_id}`                                                     | Raw bytes with `application/octet-stream`                                                              |
-| `POST /store`, `multipart/form-data`                                      | CBOR `{ blob_id: string \| null }`                                                                     |
+| Request                                                                   | Success                                                                                                               |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `POST /fetch`, `application/cbor`, `{ key: bytes, secondary_key: bytes }` | CBOR `{ kind: "exact", entries: [{ value: bytes, blob_id: string \| null }] }`, or `{ kind: "fallback", key: bytes }` |
+| `GET /blob/{blob_id}`                                                     | Raw bytes with `application/octet-stream`                                                                             |
+| `POST /store`, `multipart/form-data`                                      | CBOR `{ blob_id: string \| null }`                                                                                    |
 
 `/store` requires one `metadata` part with content type `application/cbor` and fields `{ key: bytes, secondary_key: bytes, value: bytes }`. An optional `blob` part has content type `application/octet-stream`. Either part order works. An omitted blob returns `null`; an empty blob gets an ID. Duplicate parts, unknown parts, duplicate envelope fields, extra fields, invalid types, and truncated bodies are rejected.
 
 Empty and non-UTF-8 keys work. CBOR definite and indefinite maps and byte strings work, including noncanonical lengths. The bounded envelope decoder supports only the protocol's map and string types. It never decodes `value` contents. Chunked strings have a 4,096-chunk bookkeeping limit.
 
-Fetch gives exact matches priority. A fallback follows the latest secondary-key association and returns only the stored key, without reading R2. A store replaces both mappings atomically. Reassigning a secondary key does not delete its former target. Replacing an entry preserves the other associations to its key.
+A key keeps several entries ([RFC 0003](../rfcs/0003-several-entries-per-key.md)). A store adds an entry for its key and sets the secondary-key association in one transaction; concurrent stores to a key are all kept. When a key has more than its namespace's `entries_per_key` (8 by default, at most 16), its oldest entries are retired. An exact fetch lists the key's live entries, newest first; the client uses the first one that matches its inputs. Fetch gives exact matches priority. A fallback follows the latest secondary-key association and returns only the stored key, without reading R2. Reassigning a secondary key does not delete its former target.
 
-HTTP status codes follow the [local RFC](../rfcs/0001-remote-cache.md#4-http-api-mapping). A fetch returns `404` when neither key resolves to a live entry. An unavailable blob also returns `404`, including when its R2 object is missing. These responses use plain text. A missing or unreadable value for a live exact match is a storage failure and returns `503`, as specified in [the read design](../rfcs/0001-remote-cache.md#7-fetch-and-download-implementation).
+HTTP status codes follow the [local RFC](../rfcs/0001-remote-cache.md#4-http-api-mapping). A fetch returns `404` when neither key resolves to a live entry. An unavailable blob also returns `404`, including when its R2 object is missing. These responses use plain text. A missing or unreadable value for any of a key's live entries is a storage failure and returns `503`, as specified in [the read design](../rfcs/0001-remote-cache.md#7-fetch-and-download-implementation).
 
 Errors have `Content-Type: text/plain; charset=utf-8`. Codes are `400` for invalid input, `401` for invalid/missing/expired tokens, `403` for a signed token that fails write policy, `404` for absent data or unavailable namespaces/routes, `413` for size limits, `429` for admission limits, `500` for an incomplete operation, and `503` for unavailable authorization/storage, failed publication guards, quotas, or concurrency admission. `429` and `503` include `Retry-After: 60`.
 
@@ -66,7 +66,7 @@ Use the account's actual Workers subdomain. For a custom domain, set `--origin h
 
 Setup discovers resources by name, creates missing resources, applies migrations, resolves public repository and owner IDs through GitHub, records the default branch and exact audience, installs lifecycle/Cron settings, deploys, and prints the endpoint. Repeated setup does not duplicate resources or re-enable a withdrawn namespace. An incompatible origin or repository is rejected before setup changes existing policies, bucket settings, or saved configuration. Configuration is written to the ignored `wrangler.operator.json`; keep a secure backup of this non-secret file.
 
-Start with Workers Free. The operator defaults to the `free` resource profile: an 8 GB budget, 20,000 entries, 20,000 associations, and 16 generations per Cron run. A paid subscription is optional. Setup does not purchase or change a Workers subscription, and R2 must be enabled separately.
+Start with Workers Free. The operator defaults to the `free` resource profile: an 8 GB budget, 20,000 entry keys, 20,000 associations, and 16 generations per Cron run. A paid subscription is optional. Setup does not purchase or change a Workers subscription, and R2 must be enabled separately.
 
 Check deployed CPU and usage for your workload. Workers Free currently allows [10 ms of CPU per invocation](https://developers.cloudflare.com/workers/platform/limits/); maximum payloads are not yet validated against that allowance. Local CPU measurements are diagnostic, not Cloudflare billing measurements. Lower payload limits or select Workers Paid if your workload exceeds Free limits.
 
@@ -82,7 +82,7 @@ Set GitHub Actions `id-token: write` only on the trusted publishing job. The tok
 
 `pull_request` tokens are denied by default. As an interim measure, an operator can opt a namespace in with `pnpm operator policy --namespace docs --pull-requests on`, or pass `--pull-requests on` to the setup that creates the namespace. `--pull-requests off` withdraws the opt-in. An opted-in namespace accepts a `pull_request` token that passes the same audience, repository/owner ID, and visibility checks as a push and also has `ref` `refs/pull/<number>/merge`, `ref_type` `branch`, and a `base_ref` equal to the registered default branch. PRs that target another branch, `pull_request_target`, `workflow_run`, tags, and workflows in fork repositories remain denied.
 
-The opt-in carries a risk: PR entries share the namespace with default-branch entries. Code from any same-repository PR, including Renovate dependency branches, runs before review and can publish an entry that a later default-branch build restores. That is why it is off by default. The long-term fix is to [scope pull request uploads to the pull request](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/issues/16).
+The opt-in carries a risk: PR entries share the namespace with default-branch entries. Code from any same-repository PR, including Renovate dependency branches, runs before review and can publish an entry that a later default-branch build restores. That is why it is off by default. Because a key keeps several entries, PR entries also take slots from the default branch's entries. The long-term fix is to [scope pull request uploads to the pull request](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/issues/16).
 
 Fork PR workflows run in the base repository, so their tokens carry its repository and owner IDs; the server cannot tell them from same-repository PRs. The policy depends on GitHub not granting `id-token: write` to fork PR workflows. GitHub grants write permissions to them only when the repository enables **Send write tokens to workflows from pull requests**, a setting [GitHub offers for private repositories only](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#enabling-workflows-for-forks-of-private-repositories). GitHub treats Dependabot PRs like fork PRs.
 
@@ -102,7 +102,8 @@ Fork PR workflows run in the base repository, so their tokens carry its reposito
 | Store request deadline                       | 2 minutes         |
 | Metadata / blob lookup deadline              | 15 seconds        |
 | Upload lease                                 | 15 minutes        |
-| Replacement/late-upload grace                | 10 minutes        |
+| Entries per key                              | 8, at most 16     |
+| Retired-entry/late-upload grace              | 10 minutes        |
 | Concurrent buffered stores/reads per isolate | 2 / 4             |
 
 The `LIMITS` Wrangler variable is a JSON object with optional keys `key`, `value`, `metadata`, `fetch`, `blob`, `store`, `headers`, and `deadlineMs`. It can lower the tested ceilings. Envelope limits must accommodate their field limits and framing. Raising ceilings requires code changes and new memory, CPU, and account-limit measurements. An HTTP request without `Content-Length` reserves the full store limit. Actual bytes replace that reservation only at publication; pending, retired, and deleting generations remain charged.
@@ -124,13 +125,14 @@ pnpm operator policy --namespace docs --pull-requests on
 pnpm operator policy --namespace docs --enabled off
 pnpm operator policy --namespace docs --enabled on --writes on
 pnpm operator policy --namespace docs --retention-days 30 --byte-limit 30000000000
+pnpm operator policy --namespace docs --entries-per-key 16
 pnpm operator deployment --byte-limit 30000000000
 pnpm operator deployment --writes off
 pnpm operator deployment --enabled off
 pnpm operator upgrade
 ```
 
-`bind` refreshes repository display data, owner ID, and default branch for an existing repository, or registers a new namespace. It never silently moves existing public data to a different repository. Per-scope and deployment byte/entry/association limits all apply; use `--entry-limit` and `--association-limit` to change them explicitly. Lowering a limit below current use blocks further publication until cleanup or an operator change restores capacity.
+`bind` refreshes repository display data, owner ID, and default branch for an existing repository, or registers a new namespace. It never silently moves existing public data to a different repository. Per-scope and deployment byte/entry/association limits all apply; use `--entry-limit` and `--association-limit` to change them explicitly. The entry limit counts keys, not each key's entries. `--entries-per-key` sets how many entries a key keeps; a fetch reads up to that many values. Lowering a limit below current use blocks further publication until cleanup or an operator change restores capacity.
 
 `status` reports policy, charged bytes, entry/association counts, generation states, cleanup eligibility, and actual D1 storage. It warns at 400 MB. Set provider alerts at 80% of request, CPU, R2 operation/storage, and D1 read/write/storage allowances. Monitor cleanup delay and pending bytes, and pause writes before a backlog reaches the storage ceiling. Public requests and other services in the same account can exhaust allowances even when this cache's byte budget is respected.
 
@@ -138,9 +140,9 @@ Sampled structured logs include request ID, namespace, operation, exact/fallback
 
 ### Cleanup and withdrawal
 
-Every five minutes Cron claims a bounded indexed set of eligible generations, aborts known multipart uploads, deletes immutable object names, then releases charges. Failed deletion is retried after ten minutes. Conditional claims and generation-specific foreign keys preserve concurrent replacement entries. An indexed cursor scans and deletes orphan associations in bounded batches.
+Every five minutes Cron claims a bounded indexed set of eligible generations, aborts known multipart uploads, deletes immutable object names, then releases charges. Failed deletion is retried after ten minutes. Conditional claims and generation-specific foreign keys preserve a key's newer entries. An indexed cursor scans and deletes orphan associations in bounded batches.
 
-Current entries expire seven days after commit by default. Replaced blob IDs retain their original bytes for ten minutes. Abandoned uploads get a late-operation grace period after their lease ends. R2 lifecycle rules abort unfinished multipart uploads after one day and expire objects after retention plus two days (9/32 days for 7/30-day retention). A retention high-water mark prevents later policy reductions from deleting older generations early. Lifecycle covers the crash window between multipart creation and recording its ID; it supplements D1 accounting.
+Each entry expires seven days after its store by default. A retired entry's blob ID keeps its bytes for ten minutes. Abandoned uploads get a late-operation grace period after their lease ends. R2 lifecycle rules abort unfinished multipart uploads after one day and expire objects after retention plus two days (9/32 days for 7/30-day retention). A retention high-water mark prevents later policy reductions from deleting older generations early. Lifecycle covers the crash window between multipart creation and recording its ID; it supplements D1 accounting.
 
 To withdraw and delete one namespace:
 
@@ -160,7 +162,7 @@ Public data can include logs, source maps, and input metadata. Only publish resu
 
 ### Upgrade and recovery
 
-Keep the lockfile and compatibility date pinned. `upgrade` applies additive migrations before deploying the Worker. Back up `wrangler.operator.json` and the `scopes`/`deployment` policy rows separately from disposable cache data. `status` exports readable policy data. Before a migration that changes the schema contract, retain a compatible Worker bundle; do not roll back to code that predates a required schema change.
+Keep the lockfile and compatibility date pinned. `upgrade` applies migrations before deploying the Worker. Migration `0003_entries_per_key` clears cache data and keeps policy rows; the bucket's lifecycle rules delete the old objects. Back up `wrangler.operator.json` and the `scopes`/`deployment` policy rows separately from disposable cache data. `status` exports readable policy data. Before a migration that changes the schema contract, retain a compatible Worker bundle; do not roll back to code that predates a required schema change.
 
 A D1 restore cannot restore deleted R2 objects. Missing live values return `503`; missing blobs return `404`. After partial recovery, create a new namespace and retire the old one, or reconcile the generation records and objects before enabling it. Do not restore stale policy over an intentional withdrawal.
 

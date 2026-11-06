@@ -35,6 +35,15 @@ export interface Options {
 function digest(value: Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
+// An exact fetch lists a key's entries, newest first.
+function entries(result: Record<string, unknown>): Record<string, unknown>[] {
+  assert.equal(result['kind'], 'exact');
+  assert.ok(Array.isArray(result['entries']) && result['entries'].length > 0);
+  return result['entries'] as Record<string, unknown>[];
+}
+function newest(result: Record<string, unknown>): Record<string, unknown> {
+  return entries(result)[0]!;
+}
 function blobId(result: Record<string, unknown>): string {
   assert.equal(typeof result['blob_id'], 'string');
   return result['blob_id'] as string;
@@ -182,7 +191,7 @@ export async function runSuite(options: Options): Promise<Report> {
         response.status === 200 &&
         response.headers.get('X-Remote-Cache-Deployment') === deployment
       ) {
-        assert.deepEqual((await envelope(response)).value, seeded.value);
+        assert.deepEqual(newest(await envelope(response))['value'], seeded.value);
         return seeded;
       }
       await response.body?.cancel();
@@ -199,10 +208,9 @@ export async function runSuite(options: Options): Promise<Report> {
         'manual',
       ),
     );
-    assert.equal(manual['kind'], 'exact');
-    assert.deepEqual(manual['value'], bytes(`deployment:${deployment}`));
+    assert.deepEqual(newest(manual)['value'], bytes(`deployment:${deployment}`));
     assert.deepEqual(
-      await body(await call('manual', `blob/${blobId(manual)}`, 200)),
+      await body(await call('manual', `blob/${blobId(newest(manual))}`, 200)),
       bytes('Public remote cache verification blob\n'),
     );
   });
@@ -211,7 +219,7 @@ export async function runSuite(options: Options): Promise<Report> {
     // this live fixture, rather than assuming global totals cannot decrease.
     const accounting = `SELECT
       charged_bytes - (SELECT coalesce(sum(charged_bytes), 0) FROM generations) AS bytes_delta,
-      entry_count - (SELECT count(*) FROM entries) AS entries_delta,
+      entry_count - (SELECT count(*) FROM (SELECT DISTINCT scope_id, key FROM entries)) AS entries_delta,
       association_count - (SELECT count(*) FROM associations) AS associations_delta FROM deployment`;
     const before = await admin.sql(
       'SELECT charged_bytes, expires_at, state FROM generations WHERE generation_id = ?',
@@ -222,8 +230,7 @@ export async function runSuite(options: Options): Promise<Report> {
     ]);
     assert.deepEqual(await envelope(await lookup(fixture.key, fixture.secondary)), {
       kind: 'exact',
-      value: fixture.value,
-      blob_id: fixture.blobId,
+      entries: [{ value: fixture.value, blob_id: fixture.blobId }],
     });
     assert.deepEqual(await envelope(await lookup(bytes('missing'), fixture.secondary)), {
       kind: 'fallback',
@@ -291,7 +298,7 @@ export async function runSuite(options: Options): Promise<Report> {
       await admin.sql("UPDATE scopes SET enabled = 1 WHERE scope_id = 'e2e'");
     }
     assert.deepEqual(
-      (await envelope(await lookup(fixture.key, fixture.secondary))).value,
+      newest(await envelope(await lookup(fixture.key, fixture.secondary)))['value'],
       fixture.value,
     );
   });
@@ -325,52 +332,60 @@ export async function runSuite(options: Options): Promise<Report> {
       );
       assert.equal(typeof empty.blob_id, 'string');
       assert.equal((await body(await call('e2e', `blob/${blobId(empty)}`, 200))).length, 0);
-      assert.deepEqual((await envelope(await lookup(key, secondary))).value, value);
+      assert.deepEqual(newest(await envelope(await lookup(key, secondary)))['value'], value);
     });
-    await check('secondary reassignment and replacement keep both mappings coherent', async () => {
-      const a = bytes(`${prefix}-A`),
-        b = bytes(`${prefix}-B`),
-        s = bytes(`${prefix}-S`),
-        t = bytes(`${prefix}-T`);
-      const old = await envelope(await store(a, s, bytes('old'), bytes('old-blob')));
-      await body(await store(b, s, bytes('B')));
-      assert.deepEqual((await envelope(await lookup(a, s))).value, bytes('old'));
-      assert.deepEqual(await envelope(await lookup(bytes('missing'), s)), {
-        kind: 'fallback',
-        key: b,
-      });
-      await body(await store(a, t, bytes('replacement')));
-      assert.deepEqual(await envelope(await lookup(bytes('missing'), t)), {
-        kind: 'fallback',
-        key: a,
-      });
-      assert.deepEqual((await envelope(await lookup(a, t))).value, bytes('replacement'));
-      assert.deepEqual(
-        await body(await call('e2e', `blob/${blobId(old)}`, 200)),
-        bytes('old-blob'),
-      );
-    });
+    await check(
+      'secondary reassignment and added entries keep both mappings coherent',
+      async () => {
+        const a = bytes(`${prefix}-A`),
+          b = bytes(`${prefix}-B`),
+          s = bytes(`${prefix}-S`),
+          t = bytes(`${prefix}-T`);
+        const old = await envelope(await store(a, s, bytes('old'), bytes('old-blob')));
+        await body(await store(b, s, bytes('B')));
+        assert.deepEqual(newest(await envelope(await lookup(a, s)))['value'], bytes('old'));
+        assert.deepEqual(await envelope(await lookup(bytes('missing'), s)), {
+          kind: 'fallback',
+          key: b,
+        });
+        await body(await store(a, t, bytes('added')));
+        assert.deepEqual(await envelope(await lookup(bytes('missing'), t)), {
+          kind: 'fallback',
+          key: a,
+        });
+        assert.deepEqual(
+          entries(await envelope(await lookup(a, t))).map((entry) => entry['value']),
+          [bytes('added'), bytes('old')],
+        );
+        assert.deepEqual(
+          await body(await call('e2e', `blob/${blobId(old)}`, 200)),
+          bytes('old-blob'),
+        );
+      },
+    );
     await check('R2 multipart upload and download preserve bytes', async () => {
       const value = new Uint8Array(250000).fill(149),
         blob = new Uint8Array(5 * MiB + 17).fill(61);
       const key = bytes(`${prefix}-large`);
       const stored = await envelope(await store(key, key, value, blob, { blobFirst: true }));
-      assert.deepEqual((await envelope(await lookup(key, key))).value, value);
+      assert.deepEqual(newest(await envelope(await lookup(key, key)))['value'], value);
       assert.equal(
         digest(await body(await call('e2e', `blob/${blobId(stored)}`, 200))),
         digest(blob),
       );
     });
-    await check('concurrent HTTP stores select one complete generation', async () => {
+    await check('concurrent HTTP stores keep both complete generations', async () => {
       const key = bytes(`${prefix}-concurrent`);
       await Promise.all(
         [0, 1].map(async (i) => body(await store(key, key, bytes(String(i)), bytes(String(i))))),
       );
-      const selected = await envelope(await lookup(key, key));
-      assert.deepEqual(
-        await body(await call('e2e', `blob/${blobId(selected)}`, 200)),
-        selected.value,
-      );
+      const kept = entries(await envelope(await lookup(key, key)));
+      assert.equal(kept.length, 2);
+      for (const entry of kept)
+        assert.deepEqual(
+          await body(await call('e2e', `blob/${blobId(entry)}`, 200)),
+          entry['value'],
+        );
     });
     await check('malformed uploads and exhausted quotas preserve published data', async () => {
       const token = await storeToken();
@@ -401,7 +416,7 @@ export async function runSuite(options: Options): Promise<Report> {
         await admin.sql("UPDATE scopes SET byte_limit = ? WHERE scope_id = 'e2e'", [Number(limit)]);
       }
       assert.deepEqual(
-        (await envelope(await lookup(fixture.key, fixture.secondary))).value,
+        newest(await envelope(await lookup(fixture.key, fixture.secondary)))['value'],
         fixture.value,
       );
     });
@@ -416,7 +431,7 @@ export async function runSuite(options: Options): Promise<Report> {
               await store(key, key, value, blob, { blobFirst: i === 0 }),
             );
             assert.equal(
-              digest((await envelope(await lookup(key, key))).value as Uint8Array),
+              digest(newest(await envelope(await lookup(key, key)))['value'] as Uint8Array),
               digest(value),
             );
             assert.equal(

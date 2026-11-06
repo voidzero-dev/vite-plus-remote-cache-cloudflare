@@ -107,18 +107,14 @@ try {
     // separately; it must not be interpreted as Cloudflare's billed Worker CPU.
     const value = new Uint8Array(valueSize);
     const envelope = encodeEnvelope({ key: bytes('codec'), secondary_key: bytes('codec'), value });
-    for (const operation of ['decode', 'encode']) {
-      const start = process.cpuUsage();
-      for (let i = 0; i < 100; i++) {
-        if (operation === 'decode') decodeEnvelope(envelope, true, defaults);
-        else encodeEnvelope({ kind: 'exact', value, blob_id: null });
-      }
-      const cpu = process.cpuUsage(start);
-      measurements.push({
-        name: `cbor-${operation}-${valueSize}`,
-        node_cpu_ms_per_operation: (cpu.user + cpu.system) / 100000,
-      });
-    }
+    // Fetch streams values from R2 without encoding them, so only store decoding is measured.
+    const start = process.cpuUsage();
+    for (let i = 0; i < 100; i++) decodeEnvelope(envelope, true, defaults);
+    const cpu = process.cpuUsage(start);
+    measurements.push({
+      name: `cbor-decode-${valueSize}`,
+      node_cpu_ms_per_operation: (cpu.user + cpu.system) / 100000,
+    });
     await measure(`fetch-value-${valueSize}`, async () => {
       assert.equal(
         (await h.store(bytes('fetch'), bytes('fetch'), value, undefined, { token })).status,

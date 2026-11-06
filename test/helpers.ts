@@ -84,7 +84,7 @@ export async function harness(
     for (const name of (await readdir(migrations)).filter((file) => file.endsWith('.sql')).sort())
       statements.push(
         ...(await readFile(new URL(name, migrations), 'utf8')).match(
-          /CREATE TRIGGER[\s\S]*?\nEND;|(?:CREATE TABLE|CREATE (?:UNIQUE )?INDEX|INSERT INTO|ALTER TABLE|DROP TRIGGER)[\s\S]*?;/g,
+          /CREATE TRIGGER[\s\S]*?\nEND;|(?:CREATE TABLE|CREATE (?:UNIQUE )?INDEX|INSERT INTO|UPDATE|ALTER TABLE|DROP TRIGGER|DROP TABLE)[\s\S]*?;/g,
         )!,
       );
     const migrate = () => db.batch(statements.map((sql) => db.prepare(sql)));

@@ -14,9 +14,9 @@ test('CBOR fixtures preserve opaque, empty, indefinite, and noncanonical bytes',
     assert.deepEqual(Array.from(actual.secondary_key), fixtures.expectedSecondaryKey, fixture.name);
   }
   const value = Uint8Array.of(0, 255, 159, 255);
-  assert.deepEqual(decode(encodeEnvelope({ kind: 'exact', value, blob_id: null })), {
-    kind: 'exact',
-    value,
+  assert.deepEqual(decode(encodeEnvelope({ kind: 'fallback', key: value, blob_id: null })), {
+    kind: 'fallback',
+    key: value,
     blob_id: null,
   });
 });

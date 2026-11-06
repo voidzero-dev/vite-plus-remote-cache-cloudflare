@@ -35,6 +35,7 @@ test('fallbacks return only opaque keys without R2 reads, while exact failures r
     const deadline = new Deadline(10000);
     const stats = new Observations();
     const env = { ...original, ARTIFACTS: bucket };
+    const ctx = { waitUntil: () => {} };
     try {
       for (const key of [
         Uint8Array.of(0, 255),
@@ -44,23 +45,30 @@ test('fallbacks return only opaque keys without R2 reads, while exact failures r
         const stored = await h.store(key, bytes('S'), bytes('value'), bytes('blob'));
         assert.equal(stored.status, 200);
         await stored.arrayBuffer();
-        assert.deepEqual(
-          await fetchMetadata(request(bytes('missing')), env, 'test', defaults, deadline, stats),
-          { kind: 'fallback', key },
+        const result = await fetchMetadata(
+          request(bytes('missing')),
+          env,
+          ctx,
+          'test',
+          defaults,
+          deadline,
+          stats,
         );
+        assert.equal(result.kind, 'fallback');
+        assert.deepEqual(await decodeResponse(result.response), { kind: 'fallback', key });
         assert.equal(reads, 0);
         assert.equal(stats.r2_operations, 0);
       }
       // An exact match still wins when the secondary key points at a different live entry.
       await assert.rejects(
-        fetchMetadata(request(Uint8Array.of(0, 255)), env, 'test', defaults, deadline, stats),
+        fetchMetadata(request(Uint8Array.of(0, 255)), env, ctx, 'test', defaults, deadline, stats),
         { status: 503 },
       );
       assert.equal(reads, 1);
       assert.equal(stats.r2_operations, 1);
       await h.db.prepare("UPDATE generations SET expires_at = 0 WHERE state = 'ready'").run();
       await assert.rejects(
-        fetchMetadata(request(bytes('missing')), env, 'test', defaults, deadline, stats),
+        fetchMetadata(request(bytes('missing')), env, ctx, 'test', defaults, deadline, stats),
         { status: 404 },
       );
       assert.equal(reads, 1);
@@ -144,7 +152,7 @@ test('R2 PUT, multipart creation, part, completion, and upload-ID recording fail
         );
         await Promise.all(pending);
         assert.deepEqual(
-          (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+          (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
           bytes('old'),
         );
         assert.equal((await h.fetch(bytes('missing'), bytes('T'))).status, 404);
@@ -164,6 +172,7 @@ test('R2 PUT, multipart creation, part, completion, and upload-ID recording fail
 test('failed deletion remains charged and a retry removes only the claimed generation', async () => {
   const h = await harness();
   try {
+    await h.db.prepare("UPDATE scopes SET entries_per_key = 1 WHERE scope_id = 'test'").run();
     await h.store(bytes('A'), bytes('S'), bytes('old'), bytes('blob'));
     await h.store(bytes('A'), bytes('T'), bytes('new'));
     await h.db.prepare("UPDATE generations SET gc_after = 0 WHERE state = 'retired'").run();
@@ -194,7 +203,7 @@ test('failed deletion remains charged and a retry removes only the claimed gener
       key: bytes('A'),
     });
     assert.deepEqual(
-      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
       bytes('new'),
     );
   } finally {
@@ -288,7 +297,7 @@ test('scope/deployment disable and capacity changes revoke pending publications'
   }
 });
 
-test('scope and deployment entry limits roll back association changes, while replacements use no new slot', async () => {
+test('scope and deployment entry limits roll back association changes, while more entries for a key use no new slot', async () => {
   const h = await harness();
   try {
     assert.equal((await h.store(bytes('A'), bytes('S'), bytes('old'))).status, 200);
@@ -304,7 +313,7 @@ test('scope and deployment entry limits roll back association changes, while rep
       await h.db.prepare(`UPDATE ${table} SET association_limit = 1`).run();
       assert.equal((await h.store(bytes('A'), bytes('T'), bytes('rejected'))).status, 503);
       assert.deepEqual(
-        (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+        (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
         bytes('replacement'),
       );
       await h.db
@@ -347,7 +356,7 @@ test('cleanup preserves a recreated target and claims at most 16 generations', a
       key: bytes('A'),
     });
     assert.deepEqual(
-      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
       bytes('new'),
     );
     const scope = await getScope(h.db, 'test');
