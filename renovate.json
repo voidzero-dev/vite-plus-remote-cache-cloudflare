@@ -4,12 +4,7 @@
   "packageRules": [
     {
       "groupName": "vite-plus monorepo",
-      "matchPackageNames": [
-        "vite-plus",
-        "@voidzero-dev/*",
-        "vitest",
-        "@vitest/**"
-      ]
+      "matchPackageNames": ["vite-plus", "@voidzero-dev/*", "vitest", "@vitest/**"]
     }
   ]
 }
