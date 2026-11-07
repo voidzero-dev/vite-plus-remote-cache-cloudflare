@@ -56,7 +56,7 @@ export default {
       if (!rateLimit.success) throw new HttpError(429, 'rate_limit');
       if (!known || url.search || request.method !== (operation === 'blob' ? 'GET' : 'POST'))
         throw new HttpError(404, 'unknown_route');
-      release = admission.acquire(operation === 'store');
+      release = await admission.acquire(operation === 'store', deadline.abortSignal);
       const scope = await deadline.run(getScope(env.INDEX, scopeId, stats));
       if (operation === 'store') {
         identity = await deadline.run(authorize(request, scope, keys));

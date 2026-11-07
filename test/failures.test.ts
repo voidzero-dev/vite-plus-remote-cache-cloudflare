@@ -380,16 +380,60 @@ test('cleanup preserves a recreated target and claims at most 16 generations', a
   }
 });
 
-test('isolate admission bounds memory and releases capacity', () => {
-  const admission = new Admission();
-  const first = admission.acquire(true),
-    second = admission.acquire(true);
-  assert.throws(() => admission.acquire(true), { status: 503 });
+test('isolate admission bounds memory and releases capacity', async () => {
+  const admission = new Admission({ storeWaitMs: 0, readWaitMs: 0 });
+  const first = await admission.acquire(true),
+    second = await admission.acquire(true);
+  await assert.rejects(admission.acquire(true), { status: 503, code: 'concurrency_limit' });
   first();
-  const third = admission.acquire(true);
+  first();
+  const third = await admission.acquire(true);
+  await assert.rejects(admission.acquire(true), { status: 503 });
   second();
   third();
-  const readers = Array.from({ length: 4 }, () => admission.acquire(false));
-  assert.throws(() => admission.acquire(false), { status: 503 });
+  const readers = await Promise.all(Array.from({ length: 4 }, () => admission.acquire(false)));
+  await assert.rejects(admission.acquire(false), { status: 503 });
   for (const release of readers) release();
+});
+
+test('isolate admission makes a burst wait for capacity in turn', async () => {
+  const admission = new Admission({ storeWaitMs: 5000, pollMs: 1 });
+  const held = [await admission.acquire(true), await admission.acquire(true)];
+  let active = 2,
+    peak = 2;
+  const waiters = Array.from({ length: 6 }, async () => {
+    const release = await admission.acquire(true);
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active--;
+    release();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  for (const release of held) {
+    active--;
+    release();
+  }
+  await Promise.all(waiters);
+  assert.equal(peak, 2);
+  assert.equal(active, 0);
+  const again = await admission.acquire(true);
+  again();
+});
+
+test('isolate admission stops waiting at the deadline', async () => {
+  const admission = new Admission({ readWaitMs: 60_000, pollMs: 1 });
+  const readers = await Promise.all(Array.from({ length: 4 }, () => admission.acquire(false)));
+  const deadline = new Deadline(20);
+  try {
+    await assert.rejects(admission.acquire(false, deadline.abortSignal), {
+      status: 503,
+      code: 'deadline',
+    });
+  } finally {
+    deadline.dispose();
+  }
+  for (const release of readers) release();
+  const next = await admission.acquire(false);
+  next();
 });

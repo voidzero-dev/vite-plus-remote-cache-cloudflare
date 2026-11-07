@@ -26,7 +26,7 @@ A key keeps several entries ([RFC 0003](../rfcs/0003-several-entries-per-key.md)
 
 HTTP status codes follow the [local RFC](../rfcs/0001-remote-cache.md#4-http-api-mapping). A fetch returns `404` when neither key resolves to a live entry. An unavailable blob also returns `404`, including when its R2 object is missing. These responses use plain text. A missing or unreadable value for any of a key's live entries is a storage failure and returns `503`, as specified in [the read design](../rfcs/0001-remote-cache.md#7-fetch-and-download-implementation).
 
-Errors have `Content-Type: text/plain; charset=utf-8`. Codes are `400` for invalid input, `401` for invalid/missing/expired tokens, `403` for a signed token that fails write policy, `404` for absent data or unavailable namespaces/routes, `413` for size limits, `429` for admission limits, `500` for an incomplete operation, and `503` for unavailable authorization/storage, failed publication guards, quotas, or concurrency admission. `429` and `503` include `Retry-After: 60`.
+Errors have `Content-Type: text/plain; charset=utf-8`. Codes are `400` for invalid input, `401` for invalid/missing/expired tokens, `403` for a signed token that fails write policy, `404` for absent data or unavailable namespaces/routes, `413` for size limits, `429` for admission limits, `500` for an incomplete operation, and `503` for unavailable authorization/storage, failed publication guards, quotas, or concurrency admission after a wait for a slot. `429` and `503` include `Retry-After: 60`.
 
 All responses disable caching. No CDN cache, R2 public URL, presigned URL, administrative HTTP route, or authentication redirect is exposed. The request host is never used as the JWT audience.
 
@@ -105,6 +105,7 @@ Fork PR workflows run in the base repository, so their tokens carry its reposito
 | Entries per key                              | 8, at most 16     |
 | Retired-entry/late-upload grace              | 10 minutes        |
 | Concurrent buffered stores/reads per isolate | 2 / 4             |
+| Wait for a store/read slot                   | 30 / 10 seconds   |
 
 The `LIMITS` Wrangler variable is a JSON object with optional keys `key`, `value`, `metadata`, `fetch`, `blob`, `store`, `headers`, and `deadlineMs`. It can lower the tested ceilings. Envelope limits must accommodate their field limits and framing. Raising ceilings requires code changes and new memory, CPU, and account-limit measurements. An HTTP request without `Content-Length` reserves the full store limit. Actual bytes replace that reservation only at publication; pending, retired, and deleting generations remain charged.
 
