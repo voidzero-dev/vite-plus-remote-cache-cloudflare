@@ -11,5 +11,5 @@
 {
   "rolldown": "rolldown/rolldown",
   "vite-plus": "voidzero-dev/vite-plus",
-  "void": { "repository": "voidzero-dev/void", "pullRequests": true },
+  "void-replay": { "repository": "wan9chi/void", "pullRequests": true },
 }
