@@ -79,6 +79,13 @@ function positive(value: string | undefined, fallback: number): number {
 function optionalPositive(value: string | undefined): number | null {
   return value ? positive(value, 1) : null;
 }
+// How many of a key's newest entries a namespace keeps. Each fetch reads up to this many values.
+function entriesPerKey(value: string | undefined): number | null {
+  if (value === undefined) return null;
+  const number = positive(value, 1);
+  if (number > 16) throw new Error('A namespace keeps at most 16 entries per key');
+  return number;
+}
 function toggle(value: string | undefined): number | null {
   if (value === undefined) return null;
   if (value !== 'on' && value !== 'off') throw new Error('Use on or off');
@@ -226,6 +233,7 @@ export async function runOperator(
       'byte-limit': { type: 'string' },
       'entry-limit': { type: 'string' },
       'association-limit': { type: 'string' },
+      'entries-per-key': { type: 'string' },
       enabled: { type: 'string' },
       writes: { type: 'string' },
       'pull-requests': { type: 'string' },
@@ -256,6 +264,7 @@ export async function runOperator(
   }
   if (values['retention-days'] && positive(values['retention-days'], 7) > 365)
     throw new Error('Retention cannot exceed 365 days');
+  entriesPerKey(values['entries-per-key']);
   toggle(values.enabled);
   toggle(values.writes);
   toggle(values['pull-requests']);
@@ -330,8 +339,8 @@ export async function runOperator(
     await query(
       io,
       config,
-      `INSERT INTO scopes (scope_id, endpoint, repository, repository_id, repository_owner_id, branch, pull_requests, retention_seconds, byte_limit, entry_limit, association_limit)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope_id) DO NOTHING`,
+      `INSERT INTO scopes (scope_id, endpoint, repository, repository_id, repository_owner_id, branch, pull_requests, retention_seconds, byte_limit, entry_limit, association_limit, entries_per_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope_id) DO NOTHING`,
       [
         namespace,
         `${origin.origin}/projects/${namespace}`,
@@ -344,6 +353,7 @@ export async function runOperator(
         positive(values['byte-limit'], 8000000000),
         positive(values['entry-limit'], 20000),
         positive(values['association-limit'], 20000),
+        entriesPerKey(values['entries-per-key']) ?? 8,
       ],
     );
     await query(
@@ -520,7 +530,8 @@ export async function runOperator(
     config,
     `UPDATE scopes SET enabled = coalesce(?, enabled), writes_enabled = coalesce(?, writes_enabled),
     pull_requests = coalesce(?, pull_requests), retention_seconds = coalesce(?, retention_seconds), byte_limit = coalesce(?, byte_limit), entry_limit = coalesce(?, entry_limit),
-    association_limit = coalesce(?, association_limit), policy_version = policy_version + 1 WHERE scope_id = ?`,
+    association_limit = coalesce(?, association_limit), entries_per_key = coalesce(?, entries_per_key),
+    policy_version = policy_version + 1 WHERE scope_id = ?`,
     [
       toggle(values.enabled),
       toggle(values.writes),
@@ -529,6 +540,7 @@ export async function runOperator(
       optionalPositive(values['byte-limit']),
       optionalPositive(values['entry-limit']),
       optionalPositive(values['association-limit']),
+      entriesPerKey(values['entries-per-key']),
       namespace,
     ],
   );

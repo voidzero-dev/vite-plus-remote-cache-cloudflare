@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'vite-plus/test';
 import { decode, encode } from 'cborg';
 import { decodeEnvelope, encodeEnvelope } from '../src/cbor.ts';
+import { pump } from '../src/fetch.ts';
 import { defaults } from '../src/limits.ts';
 import { multipart } from '../src/multipart.ts';
 import { collect, Deadline, Input } from '../src/streams.ts';
@@ -14,9 +15,9 @@ test('CBOR fixtures preserve opaque, empty, indefinite, and noncanonical bytes',
     assert.deepEqual(Array.from(actual.secondary_key), fixtures.expectedSecondaryKey, fixture.name);
   }
   const value = Uint8Array.of(0, 255, 159, 255);
-  assert.deepEqual(decode(encodeEnvelope({ kind: 'exact', value, blob_id: null })), {
-    kind: 'exact',
-    value,
+  assert.deepEqual(decode(encodeEnvelope({ kind: 'fallback', key: value, blob_id: null })), {
+    kind: 'fallback',
+    key: value,
     blob_id: null,
   });
 });
@@ -99,4 +100,43 @@ test('multipart accepts every split point, either part order, and boundary-like 
       }
     }
   }
+});
+
+test('a cancelled response cancels the value being copied and the ones after it', async () => {
+  let copying = false,
+    later = false;
+  // An R2 body whose next read never settles on its own.
+  const stalled = new ReadableStream<Uint8Array>({
+    pull: () => new Promise(() => {}),
+    cancel: () => {
+      copying = true;
+    },
+  });
+  const rest = new ReadableStream<Uint8Array>({
+    cancel: () => {
+      later = true;
+    },
+  });
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const done = pump([Uint8Array.of(1), stalled, Uint8Array.of(2), rest], writable);
+  const reader = readable.getReader();
+  assert.deepEqual((await reader.read()).value, Uint8Array.of(1));
+  await reader.cancel();
+  // Without cancellation the pending read never settles; fail instead of hanging.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      done,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('the copy outlived the cancelled response')),
+          1000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.equal(copying, true);
+  assert.equal(later, true);
 });

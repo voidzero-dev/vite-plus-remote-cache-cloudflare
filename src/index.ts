@@ -1,5 +1,4 @@
 import { authorize, githubKeys, type WriteIdentity } from './auth.ts';
-import { cborResponse } from './cbor.ts';
 import { cleanup, getScope, selectBlob } from './database.ts';
 import { errorResponse, HttpError, unavailable } from './errors.ts';
 import { fetchMetadata } from './fetch.ts';
@@ -64,8 +63,8 @@ export default {
         response = await store(request, env, ctx, scope, identity, limits, deadline, stats);
         outcome = 'stored';
       } else if (operation === 'fetch') {
-        const result = await fetchMetadata(request, env, scopeId, limits, deadline, stats);
-        response = cborResponse(result);
+        const result = await fetchMetadata(request, env, ctx, scopeId, limits, deadline, stats);
+        response = result.response;
         outcome = result.kind;
       } else {
         const selected = await deadline.run(selectBlob(env.INDEX, scopeId, route[3]!, stats));

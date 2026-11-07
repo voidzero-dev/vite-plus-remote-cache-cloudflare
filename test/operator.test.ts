@@ -120,6 +120,14 @@ test('operator setup validates before writes and preserves withdrawal on retries
     const opted = await h.db.prepare("SELECT * FROM scopes WHERE scope_id = 'new'").first();
     assert.equal(opted!.pull_requests, 1);
     assert.equal(opted!.policy_version, 3);
+    assert.equal(opted!.entries_per_key, 8);
+    for (const value of ['0', '17', 'many'])
+      await assert.rejects(
+        runOperator(['policy', '--namespace', 'new', '--entries-per-key', value], io),
+      );
+    await runOperator(['policy', '--namespace', 'new', '--entries-per-key', '16'], io);
+    const deeper = await h.db.prepare("SELECT * FROM scopes WHERE scope_id = 'new'").first();
+    assert.equal(deeper!.entries_per_key, 16);
     assert.equal(config.workers_dev, false);
     assert.equal(config.preview_urls, false);
     assert.deepEqual(config.routes, [{ pattern: 'cache.example.com', custom_domain: true }]);
@@ -269,6 +277,8 @@ test('operator setup creates resources and initializes an empty database', async
         'https://cache.example.com',
         '--pull-requests',
         'on',
+        '--entries-per-key',
+        '4',
       ],
       io,
     );
@@ -276,10 +286,13 @@ test('operator setup creates resources and initializes an empty database', async
     assert.equal(config.vars['GC_BATCH_SIZE'], '16');
     assert.deepEqual(JSON.parse(config.vars['NAMESPACES']!), ['test']);
     const scope = await h.db
-      .prepare("SELECT endpoint, pull_requests FROM scopes WHERE scope_id = 'test'")
+      .prepare(
+        "SELECT endpoint, pull_requests, entries_per_key FROM scopes WHERE scope_id = 'test'",
+      )
       .first();
     assert.equal(scope!.endpoint, 'https://cache.example.com/projects/test');
     assert.equal(scope!.pull_requests, 1);
+    assert.equal(scope!.entries_per_key, 4);
   } finally {
     await h.close();
   }

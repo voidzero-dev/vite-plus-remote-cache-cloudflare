@@ -4,7 +4,7 @@ import { encode } from 'cborg';
 import { bytes, decodeResponse, endpoint, harness } from './helpers.ts';
 import { getScope, publish, reserve } from '../src/database.ts';
 
-test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace isolation, and read-only access', async () => {
+test('Workers D1/R2: exact/fallback, appended entries, empty blobs, namespace isolation, and read-only access', async () => {
   const h = await harness();
   try {
     const a = Uint8Array.of(0, 255),
@@ -19,16 +19,23 @@ test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace isolati
     assert.equal((await h.store(b, s, bytes('VB'))).status, 200);
     assert.deepEqual(await decodeResponse(await h.fetch(a, s)), {
       kind: 'exact',
-      value: bytes('VA'),
-      blob_id: firstBlob,
+      entries: [{ value: bytes('VA'), blob_id: firstBlob }],
     });
     assert.deepEqual(await decodeResponse(await h.fetch(c, s)), {
       kind: 'fallback',
       key: b,
     });
-    const replacement = await h.store(a, t, bytes('VA2'), new Uint8Array(), { blobFirst: true });
-    assert.equal(replacement.status, 200);
-    const emptyBlob = (await decodeResponse(replacement)).blob_id;
+    // A second store adds an entry. Fetch returns both, newest first.
+    const second = await h.store(a, t, bytes('VA2'), new Uint8Array(), { blobFirst: true });
+    assert.equal(second.status, 200);
+    const emptyBlob = (await decodeResponse(second)).blob_id;
+    assert.deepEqual(await decodeResponse(await h.fetch(a, s)), {
+      kind: 'exact',
+      entries: [
+        { value: bytes('VA2'), blob_id: emptyBlob },
+        { value: bytes('VA'), blob_id: firstBlob },
+      ],
+    });
     assert.equal(typeof emptyBlob, 'string');
     assert.equal(await (await h.mf.dispatchFetch(`${endpoint}/blob/${firstBlob}`)).text(), 'old');
     assert.equal((await h.mf.dispatchFetch(`${endpoint}/blob/${emptyBlob}`)).status, 200);
@@ -52,8 +59,11 @@ test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace isolati
       ).status,
       200,
     );
-    assert.deepEqual((await decodeResponse(await h.fetch(a, s, 'other'))).value, bytes('other'));
-    assert.deepEqual((await decodeResponse(await h.fetch(a, s))).value, bytes('VA2'));
+    assert.deepEqual(
+      (await decodeResponse(await h.fetch(a, s, 'other'))).entries[0].value,
+      bytes('other'),
+    );
+    assert.deepEqual((await decodeResponse(await h.fetch(a, s))).entries[0].value, bytes('VA2'));
     assert.deepEqual(await decodeResponse(await h.fetch(c, t)), { kind: 'fallback', key: a });
     assert.equal((await h.fetch(c, t, 'other')).status, 404);
     const before = await h.db.prepare('SELECT * FROM deployment').first();
@@ -64,6 +74,78 @@ test('Workers D1/R2: exact/fallback, replacement, empty blobs, namespace isolati
     assert.equal((await h.fetch(a, t)).status, 404);
     assert.equal((await h.fetch(c, t)).status, 404);
     assert.equal((await h.mf.dispatchFetch(`${endpoint}/blob/${firstBlob}`)).status, 404);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a key keeps its newest entries_per_key entries and counts as one entry', async () => {
+  const h = await harness();
+  try {
+    await h.db.prepare("UPDATE scopes SET entries_per_key = 2 WHERE scope_id = 'test'").run();
+    const blobs: string[] = [];
+    for (const value of ['one', 'two', 'three']) {
+      const response = await h.store(bytes('A'), bytes('S'), bytes(value), bytes(value));
+      assert.equal(response.status, 200, await response.clone().text());
+      blobs.push((await decodeResponse(response)).blob_id);
+    }
+    assert.deepEqual(await decodeResponse(await h.fetch(bytes('A'), bytes('S'))), {
+      kind: 'exact',
+      entries: [
+        { value: bytes('three'), blob_id: blobs[2] },
+        { value: bytes('two'), blob_id: blobs[1] },
+      ],
+    });
+    // The oldest entry is retired, and its blob stays downloadable for the grace period.
+    const states = await h.db
+      .prepare('SELECT blob_id, state FROM generations ORDER BY state, blob_id')
+      .all<{ blob_id: string; state: string }>();
+    assert.deepEqual(
+      states.results.filter((row) => row.state === 'retired').map((row) => row.blob_id),
+      [blobs[0]],
+    );
+    assert.equal(await (await h.mf.dispatchFetch(`${endpoint}/blob/${blobs[0]}`)).text(), 'one');
+    assert.deepEqual(
+      await h.db.prepare("SELECT entry_count FROM scopes WHERE scope_id = 'test'").first(),
+      { entry_count: 1 },
+    );
+    assert.equal((await h.db.prepare('SELECT count(*) AS n FROM entries').first())!.n, 2);
+    // Expired entries are left out, and cleanup removes them and uncounts the key.
+    await h.db
+      .prepare('UPDATE generations SET expires_at = 0, gc_after = 0 WHERE blob_id = ?')
+      .bind(blobs[2])
+      .run();
+    assert.deepEqual((await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries, [
+      { value: bytes('two'), blob_id: blobs[1] },
+    ]);
+    await h.db.prepare('UPDATE generations SET expires_at = 0, gc_after = 0').run();
+    await (await h.mf.getWorker()).scheduled();
+    assert.equal((await h.fetch(bytes('A'), bytes('S'))).status, 404);
+    const accounting = await h.db.prepare('SELECT * FROM deployment').first();
+    assert.equal(accounting!.entry_count, 0);
+    assert.equal(accounting!.charged_bytes, 0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("expired entries take no slot when a store retires a key's oldest entries", async () => {
+  const h = await harness();
+  try {
+    await h.db.prepare("UPDATE scopes SET entries_per_key = 2 WHERE scope_id = 'test'").run();
+    const store = async (value: string) =>
+      (await decodeResponse(await h.store(bytes('A'), bytes('S'), bytes(value), bytes(value))))
+        .blob_id;
+    const a = await store('a');
+    const b = await store('b');
+    // After a retention cut, a newer entry can expire before an older one. Until Cron removes it,
+    // its row must not push the older live entry out.
+    await h.db.prepare('UPDATE generations SET expires_at = 0 WHERE blob_id = ?').bind(b).run();
+    const c = await store('c');
+    assert.deepEqual((await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries, [
+      { value: bytes('c'), blob_id: c },
+      { value: bytes('a'), blob_id: a },
+    ]);
   } finally {
     await h.close();
   }
@@ -250,7 +332,7 @@ test('publication guard and quotas preserve BOTH mappings and charged bytes', as
         'uploading',
       );
       assert.deepEqual(
-        (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+        (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
         bytes('old'),
       );
       assert.equal((await h.fetch(bytes('missing'), bytes('T'))).status, 404);
@@ -259,7 +341,7 @@ test('publication guard and quotas preserve BOTH mappings and charged bytes', as
     await h.db.prepare('UPDATE deployment SET association_limit = 1').run();
     assert.equal((await h.store(bytes('A'), bytes('new-S'), bytes('new'))).status, 503);
     assert.deepEqual(
-      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
       bytes('old'),
     );
     assert.equal((await h.store(bytes('A'), bytes('S'), bytes('update'))).status, 200);
@@ -287,13 +369,16 @@ test('large sequential R2 multipart stores and concurrent stores return coherent
       ),
     );
     for (const result of stored) assert.equal(result.status, 200);
+    // Concurrent stores to one key are all kept, each with its own blob.
     const final = await decodeResponse(await h.fetch(bytes('race'), bytes('race')));
-    assert.deepEqual(
-      new Uint8Array(
-        await (await h.mf.dispatchFetch(`${endpoint}/blob/${final.blob_id}`)).arrayBuffer(),
-      ),
-      final.value,
-    );
+    assert.equal(final.entries.length, 2);
+    for (const entry of final.entries)
+      assert.deepEqual(
+        new Uint8Array(
+          await (await h.mf.dispatchFetch(`${endpoint}/blob/${entry.blob_id}`)).arrayBuffer(),
+        ),
+        entry.value,
+      );
     const accounting = await h.db
       .prepare(
         'SELECT charged_bytes, (SELECT sum(charged_bytes) FROM generations) AS expected FROM deployment',
@@ -323,6 +408,7 @@ test('large sequential R2 multipart stores and concurrent stores return coherent
 test('retention, retirement, abandoned uploads, and bounded cleanup protect replacements', async () => {
   const h = await harness();
   try {
+    await h.db.prepare("UPDATE scopes SET entries_per_key = 1 WHERE scope_id = 'test'").run();
     const oldBlob = (
       await decodeResponse(await h.store(bytes('A'), bytes('S'), bytes('old'), bytes('old')))
     ).blob_id;
@@ -331,10 +417,11 @@ test('retention, retirement, abandoned uploads, and bounded cleanup protect repl
     assert.equal((await h.mf.dispatchFetch(`${endpoint}/blob/${oldBlob}`)).status, 404);
     await (await h.mf.getWorker()).scheduled();
     assert.deepEqual(
-      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
       bytes('new'),
     );
-    const expiredBlob = (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).blob_id;
+    const expiredBlob = (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0]
+      .blob_id;
     await h.db
       .prepare("UPDATE generations SET expires_at = 0, gc_after = 0 WHERE state = 'ready'")
       .run();
@@ -467,7 +554,7 @@ test('configured field and streamed request limits return 413 without publicatio
     });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(
-      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).value,
+      (await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries[0].value,
       bytes('V'),
     );
   } finally {
