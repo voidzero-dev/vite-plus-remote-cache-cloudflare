@@ -300,6 +300,38 @@ test('JWKS outages fail closed and have a refresh cooldown', async () => {
   }
 });
 
+test('concurrent stores on a cold isolate share one JWKS fetch', async () => {
+  const h = await harness({ jwksDelayMs: 300 });
+  try {
+    const responses = await Promise.all(
+      ['A', 'B', 'C'].map((key) => h.store(bytes(key), bytes(`S${key}`), bytes('V'))),
+    );
+    assert.deepEqual(
+      responses.map((response) => response.status),
+      [200, 200, 200],
+    );
+    assert.equal(h.jwksRequests(), 1);
+  } finally {
+    await h.close();
+  }
+});
+
+test('concurrent stores during a JWKS outage fail closed with one fetch', async () => {
+  const h = await harness({ jwksStatus: 503, jwksDelayMs: 300 });
+  try {
+    const responses = await Promise.all(
+      ['A', 'B', 'C'].map((key) => h.store(bytes(key), bytes(`S${key}`), bytes('V'))),
+    );
+    assert.deepEqual(
+      responses.map((response) => response.status),
+      [503, 503, 503],
+    );
+    assert.equal(h.jwksRequests(), 1);
+  } finally {
+    await h.close();
+  }
+});
+
 test('publication guard and quotas preserve BOTH mappings and charged bytes', async () => {
   const h = await harness();
   try {

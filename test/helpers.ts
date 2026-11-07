@@ -16,6 +16,7 @@ export async function harness(
     readLimit?: number;
     storeLimit?: number;
     jwksStatus?: number;
+    jwksDelayMs?: number;
     limits?: Record<string, number>;
     inspector?: boolean;
     deploymentId?: string;
@@ -67,6 +68,8 @@ export async function harness(
       outboundService: async (request) => {
         if (request.url !== JWKS_URL) throw new Error('Unexpected outbound request');
         jwksRequests++;
+        if (options.jwksDelayMs)
+          await new Promise((resolve) => setTimeout(resolve, options.jwksDelayMs));
         return new Response(JSON.stringify({ keys: [jwk] }), {
           status: options.jwksStatus ?? 200,
           headers: { 'Content-Type': 'application/json' },
