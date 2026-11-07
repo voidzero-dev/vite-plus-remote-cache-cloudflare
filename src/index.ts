@@ -46,14 +46,6 @@ export default {
         scopeId = route[1]!;
         operation = route[2]!.startsWith('blob/') ? 'blob' : route[2]!;
       }
-      const limiter =
-        operation === 'store' || url.pathname.endsWith('/store')
-          ? env.STORE_LIMITER
-          : env.READ_LIMITER;
-      const rateLimit = await deadline.run(
-        limiter.limit({ key: known ? `${scopeId}:${operation}` : 'unknown' }),
-      );
-      if (!rateLimit.success) throw new HttpError(429, 'rate_limit');
       if (!known || url.search || request.method !== (operation === 'blob' ? 'GET' : 'POST'))
         throw new HttpError(404, 'unknown_route');
       release = await admission.acquire(operation === 'store', deadline.abortSignal);

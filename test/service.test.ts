@@ -476,15 +476,11 @@ test('retention, retirement, abandoned uploads, and bounded cleanup protect repl
   }
 });
 
-test('rate admission uses bounded keys and precedes storage', async () => {
-  const h = await harness({ readLimit: 1, storeLimit: 1 });
+test('unknown routes and unauthenticated stores precede storage', async () => {
+  const h = await harness();
   try {
     assert.equal((await h.mf.dispatchFetch('https://cache.example.com/unknown-one')).status, 404);
-    const limited = await h.mf.dispatchFetch('https://cache.example.com/unknown-two');
-    assert.equal(limited.status, 429);
-    assert.equal(limited.headers.get('Retry-After'), '60');
     assert.equal((await h.mf.dispatchFetch(`${endpoint}/store`, { method: 'POST' })).status, 401);
-    assert.equal((await h.mf.dispatchFetch(`${endpoint}/store`, { method: 'POST' })).status, 429);
     assert.equal((await h.db.prepare('SELECT count(*) AS n FROM generations').first())!.n, 0);
   } finally {
     await h.close();

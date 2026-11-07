@@ -102,11 +102,8 @@ test('operator setup validates before writes and preserves withdrawal on retries
     );
     assert.deepEqual(await h.db.prepare('SELECT * FROM deployment').first(), originalDeployment);
     await runOperator(args, io);
-    const rateLimits = structuredClone(config.ratelimits);
-    assert.ok(rateLimits.every((binding) => !['1001', '1002'].includes(binding.namespace_id)));
     await runOperator(['policy', '--namespace', 'new', '--enabled', 'off', '--writes', 'off'], io);
     await runOperator(args, io);
-    assert.deepEqual(config.ratelimits, rateLimits);
     const row = await h.db.prepare("SELECT * FROM scopes WHERE scope_id = 'new'").first();
     assert.equal(row!.enabled, 0);
     assert.equal(row!.writes_enabled, 0);
@@ -168,51 +165,32 @@ test('operator setup validates before writes and preserves withdrawal on retries
   }
 });
 
-test('operator upgrades isolate rate counters by Worker and retain them across revisions', async () => {
-  const namespaces = new Set<string>();
-  for (const name of ['vp-cache-ci-staging', 'custom-ci-staging', 'production']) {
-    let config = await readTemplate();
-    config.name = name;
-    const limits = config.ratelimits.map((binding) => binding.simple);
-    const deployed: (typeof config)[] = [];
-    const io: OperatorIO = {
-      async api() {
-        return [{ success: true, results: [{ retention: 604800 }] }];
-      },
-      async github() {
-        throw new Error('Unexpected GitHub request');
-      },
-      async readConfig() {
-        return structuredClone(config);
-      },
-      async writeConfig(value) {
-        config = structuredClone(value);
-      },
-      async wrangler(args) {
-        if (args[0] === 'deploy') deployed.push(structuredClone(config));
-      },
-      async lifecycle() {},
-      print() {},
-    };
-    await runOperator(['upgrade'], io);
-    for (const binding of config.ratelimits) {
-      assert.match(binding.namespace_id, /^[1-9][0-9]*$/);
-      assert.ok(Number.isSafeInteger(Number(binding.namespace_id)));
-      assert.ok(
-        !namespaces.has(binding.namespace_id),
-        'deployments and bindings must not share counters',
-      );
-      namespaces.add(binding.namespace_id);
-    }
-    assert.deepEqual(
-      config.ratelimits.map((binding) => binding.simple),
-      limits,
-    );
-    config.vars['DEPLOYMENT_ID'] = 'next-revision';
-    await runOperator(['upgrade'], io);
-    assert.equal(deployed.length, 2);
-    assert.deepEqual(deployed[0]!.ratelimits, deployed[1]!.ratelimits);
-  }
+test('operator upgrade applies migrations before deploying', async () => {
+  const config = await readTemplate();
+  const steps: string[] = [];
+  const io: OperatorIO = {
+    async api() {
+      return [{ success: true, results: [{ retention: 604800 }] }];
+    },
+    async github() {
+      throw new Error('Unexpected GitHub request');
+    },
+    async readConfig() {
+      return structuredClone(config);
+    },
+    async writeConfig() {
+      steps.push('write');
+    },
+    async wrangler(args) {
+      steps.push(args.slice(0, 2).join(' '));
+    },
+    async lifecycle() {
+      steps.push('lifecycle');
+    },
+    print() {},
+  };
+  await runOperator(['upgrade'], io);
+  assert.deepEqual(steps, ['d1 migrations', 'lifecycle', 'deploy --config']);
 });
 
 test('operator setup creates resources and initializes an empty database', async () => {

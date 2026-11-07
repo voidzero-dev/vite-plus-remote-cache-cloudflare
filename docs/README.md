@@ -26,7 +26,7 @@ A key keeps several entries ([RFC 0003](../rfcs/0003-several-entries-per-key.md)
 
 HTTP status codes follow the [local RFC](../rfcs/0001-remote-cache.md#4-http-api-mapping). A fetch returns `404` when neither key resolves to a live entry. An unavailable blob also returns `404`, including when its R2 object is missing. These responses use plain text. A missing or unreadable value for any of a key's live entries is a storage failure and returns `503`, as specified in [the read design](../rfcs/0001-remote-cache.md#7-fetch-and-download-implementation).
 
-Errors have `Content-Type: text/plain; charset=utf-8`. Codes are `400` for invalid input, `401` for invalid/missing/expired tokens, `403` for a signed token that fails write policy, `404` for absent data or unavailable namespaces/routes, `413` for size limits, `429` for admission limits, `500` for an incomplete operation, and `503` for unavailable authorization/storage, failed publication guards, quotas, or concurrency admission after a wait for a slot. `429` and `503` include `Retry-After: 60`. A `503` body names its cause in parentheses, such as `Service unavailable (concurrency_limit)`.
+Errors have `Content-Type: text/plain; charset=utf-8`. Codes are `400` for invalid input, `401` for invalid/missing/expired tokens, `403` for a signed token that fails write policy, `404` for absent data or unavailable namespaces/routes, `413` for size limits, `500` for an incomplete operation, and `503` for unavailable authorization/storage, failed publication guards, quotas, or concurrency admission after a wait for a slot. `503` includes `Retry-After: 60`. A `503` body names its cause in parentheses, such as `Service unavailable (concurrency_limit)`.
 
 All responses disable caching. No CDN cache, R2 public URL, presigned URL, administrative HTTP route, or authentication redirect is exposed. The request host is never used as the JWT audience.
 
@@ -113,7 +113,7 @@ GitHub authorization uses `jose`, `RS256`, the fixed issuer `https://token.actio
 
 Tokens are limited to 16 KiB. JWKS bodies are limited to 64 KiB, requests to five seconds, cached keys to ten minutes, and refresh attempts to one per 30 seconds per isolate, including failures. Requests that need keys while a refresh runs wait for it and share its result. Unknown key IDs cannot cause unlimited refreshes. Missing usable keys fail closed. A maintainer's policy change increments its version; publication checks that version, current scope/deployment state, token expiry, lease, bytes, and identity quotas inside the D1 transaction.
 
-The rate bindings apply before database or object access. Defaults are 600 requests/minute for each namespace's fetch/blob operation and 30 store attempts/minute. Invalid credentials consume store admission too. Unknown routes share catch-all identities. Setup and upgrade derive stable limiter IDs from the Worker and binding names, so separate deployments have separate counters. Run `pnpm operator upgrade` for an existing deployment to replace the old shared IDs. Limits are approximate per Cloudflare location; they are not a global billing cap. Reads do not write D1 counters or refresh retention.
+Requests aren't rate limited. Reads do not write D1 counters or refresh retention.
 
 ## Operations
 
@@ -175,4 +175,4 @@ The benchmark records wall time, V8 CPU samples, and heap/backing-store observat
 
 The tests cover protocol fixtures, every multipart split position, binary identity semantics, all write-policy claim classes, JWKS outages/cooldowns, no-blob/empty-blob behavior, atomic concurrent stores, failed publication guards, quota accounting, R2 failures, unknown-length cancellation, namespace withdrawal, and deletion retries. No platform is skipped. The Worker deployment template and operator commands are checked locally; actual resource provisioning requires an operator account.
 
-Implementation references: [D1 transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/), [R2 Worker API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/), [lifecycle rules](https://developers.cloudflare.com/r2/buckets/object-lifecycles/), and [rate-limit bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
+Implementation references: [D1 transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/), [R2 Worker API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/), and [lifecycle rules](https://developers.cloudflare.com/r2/buckets/object-lifecycles/).

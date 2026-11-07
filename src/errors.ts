@@ -27,7 +27,6 @@ export function errorResponse(error: unknown): Response {
     403: 'Write not permitted',
     404: 'Not found',
     413: 'Request too large',
-    429: 'Rate limit exceeded',
     500: 'Operation failed',
     503: 'Service unavailable',
   };
@@ -39,7 +38,7 @@ export function errorResponse(error: unknown): Response {
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store',
-      ...(status === 429 || status === 503 ? { 'Retry-After': '60' } : {}),
+      ...(status === 503 ? { 'Retry-After': '60' } : {}),
     },
   });
 }

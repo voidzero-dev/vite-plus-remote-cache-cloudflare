@@ -13,8 +13,6 @@ export const decodeResponse = async (response: Pick<Response, 'arrayBuffer'>) =>
 
 export async function harness(
   options: {
-    readLimit?: number;
-    storeLimit?: number;
     jwksStatus?: number;
     jwksDelayMs?: number;
     limits?: Record<string, number>;
@@ -54,16 +52,6 @@ export async function harness(
         LIMITS: JSON.stringify(options.limits ?? {}),
         GC_BATCH_SIZE: '16',
         LOG_SAMPLE_RATE: '0',
-      },
-      ratelimits: {
-        READ_LIMITER: {
-          namespace_id: '1001',
-          simple: { limit: options.readLimit ?? 10000, period: 60 },
-        },
-        STORE_LIMITER: {
-          namespace_id: '1002',
-          simple: { limit: options.storeLimit ?? 10000, period: 60 },
-        },
       },
       outboundService: async (request) => {
         if (request.url !== JWKS_URL) throw new Error('Unexpected outbound request');

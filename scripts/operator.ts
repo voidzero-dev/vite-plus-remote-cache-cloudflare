@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -48,19 +47,8 @@ export type Config = {
     migrations_dir: string;
   }[];
   r2_buckets: { binding: string; bucket_name: string }[];
-  ratelimits: { name: string; namespace_id: string; simple: { limit: number; period: number } }[];
   vars: Record<string, string>;
 };
-
-function isolateRateLimits(config: Config): void {
-  for (const binding of config.ratelimits) {
-    // Account-wide IDs must stay stable across revisions and differ between Workers/bindings.
-    const hash = createHash('sha256')
-      .update(`remote-cache:${config.name}:${binding.name}`)
-      .digest();
-    binding.namespace_id = String(hash.readUIntBE(0, 6) + 1);
-  }
-}
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -332,7 +320,6 @@ export async function runOperator(
     config.workers_dev = origin.hostname.endsWith('.workers.dev');
     if (!config.workers_dev) config.routes = [{ pattern: origin.hostname, custom_domain: true }];
     config.vars['GC_BATCH_SIZE'] = profile === 'free' ? '16' : '256';
-    isolateRateLimits(config);
     await io.writeConfig(config);
     await io.wrangler(['d1', 'migrations', 'apply', 'INDEX', '--remote', '--config', configPath]);
     // Repeated setup only creates a missing policy; it never re-enables a withdrawn scope.
@@ -377,8 +364,6 @@ export async function runOperator(
   }
   const config = await io.readConfig();
   if (command === 'upgrade') {
-    isolateRateLimits(config);
-    await io.writeConfig(config);
     await io.wrangler(['d1', 'migrations', 'apply', 'INDEX', '--remote', '--config', configPath]);
     await updateLifecycle(io, config);
     await io.wrangler(['deploy', '--config', configPath]);
