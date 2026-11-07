@@ -31,7 +31,10 @@ export function errorResponse(error: unknown): Response {
     500: 'Operation failed',
     503: 'Service unavailable',
   };
-  return new Response(messages[status] ?? messages[500], {
+  let message = messages[status] ?? messages[500];
+  // A 503 has many causes; name which one, so clients can tell them apart.
+  if (status === 503 && error instanceof HttpError) message += ` (${error.code})`;
+  return new Response(message, {
     status,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',

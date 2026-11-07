@@ -9,6 +9,7 @@ import { defaults } from '../src/limits.ts';
 import { Deadline } from '../src/streams.ts';
 import { Observations } from '../src/observations.ts';
 import { Admission } from '../src/admission.ts';
+import { errorResponse, HttpError } from '../src/errors.ts';
 
 test('fallbacks return only opaque keys without R2 reads, while exact failures remain 503', async () => {
   const h = await harness();
@@ -436,4 +437,15 @@ test('isolate admission stops waiting at the deadline', async () => {
   for (const release of readers) release();
   const next = await admission.acquire(false);
   next();
+});
+
+test('a 503 response names its cause', async () => {
+  const unavailable = errorResponse(new HttpError(503, 'concurrency_limit'));
+  assert.equal(unavailable.status, 503);
+  assert.equal(await unavailable.text(), 'Service unavailable (concurrency_limit)');
+  assert.equal(
+    await errorResponse(new HttpError(403, 'write_policy')).text(),
+    'Write not permitted',
+  );
+  assert.equal(await errorResponse(new Error('internal')).text(), 'Operation failed');
 });
