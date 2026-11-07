@@ -111,7 +111,9 @@ END;
 
 -- All publication mutations inherit the guarded state change's transaction.
 -- A zero-row guard fires no trigger. A quota failure rolls every mutation back.
--- Publication adds an entry, then retires the key's entries past its newest `entries_per_key`.
+-- Publication adds an entry, then retires the key's live entries past its newest `entries_per_key`.
+-- Only live entries are ranked: after a retention cut a newer entry can expire before an older one,
+-- and an expired row Cron hasn't removed yet must not push a live entry out.
 CREATE TRIGGER publish_generation AFTER UPDATE OF state ON generations
 WHEN OLD.state = 'uploading' AND NEW.state = 'ready'
 BEGIN
@@ -120,14 +122,14 @@ BEGIN
       (SELECT coalesce(max(seq), 0) + 1 FROM entries WHERE scope_id = NEW.scope_id AND key = NEW.key));
   UPDATE generations SET state = 'retired', retired_at = unixepoch(),
     gc_after = (CASE WHEN expires_at > unixepoch() THEN unixepoch() + 600 ELSE unixepoch() END)
-    WHERE state = 'ready' AND generation_id IN (
-      SELECT generation_id FROM entries WHERE scope_id = NEW.scope_id AND key = NEW.key
-      ORDER BY seq DESC
+    WHERE generation_id IN (
+      SELECT g.generation_id FROM entries e JOIN generations g ON g.generation_id = e.generation_id
+      WHERE e.scope_id = NEW.scope_id AND e.key = NEW.key AND g.state = 'ready' AND g.expires_at > unixepoch()
+      ORDER BY e.seq DESC
       LIMIT -1 OFFSET (SELECT entries_per_key FROM scopes WHERE scope_id = NEW.scope_id));
   DELETE FROM entries WHERE scope_id = NEW.scope_id AND key = NEW.key AND generation_id IN (
-    SELECT generation_id FROM entries WHERE scope_id = NEW.scope_id AND key = NEW.key
-    ORDER BY seq DESC
-    LIMIT -1 OFFSET (SELECT entries_per_key FROM scopes WHERE scope_id = NEW.scope_id));
+    SELECT g.generation_id FROM entries e JOIN generations g ON g.generation_id = e.generation_id
+    WHERE e.scope_id = NEW.scope_id AND e.key = NEW.key AND g.state = 'retired');
   INSERT INTO associations (scope_id, secondary_key, target_key) VALUES (NEW.scope_id, NEW.secondary_key, NEW.key)
     ON CONFLICT (scope_id, secondary_key) DO UPDATE SET target_key = excluded.target_key;
 END;

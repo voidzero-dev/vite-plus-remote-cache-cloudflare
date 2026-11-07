@@ -129,6 +129,28 @@ test('a key keeps its newest entries_per_key entries and counts as one entry', a
   }
 });
 
+test("expired entries take no slot when a store retires a key's oldest entries", async () => {
+  const h = await harness();
+  try {
+    await h.db.prepare("UPDATE scopes SET entries_per_key = 2 WHERE scope_id = 'test'").run();
+    const store = async (value: string) =>
+      (await decodeResponse(await h.store(bytes('A'), bytes('S'), bytes(value), bytes(value))))
+        .blob_id;
+    const a = await store('a');
+    const b = await store('b');
+    // After a retention cut, a newer entry can expire before an older one. Until Cron removes it,
+    // its row must not push the older live entry out.
+    await h.db.prepare('UPDATE generations SET expires_at = 0 WHERE blob_id = ?').bind(b).run();
+    const c = await store('c');
+    assert.deepEqual((await decodeResponse(await h.fetch(bytes('A'), bytes('S')))).entries, [
+      { value: bytes('c'), blob_id: c },
+      { value: bytes('a'), blob_id: a },
+    ]);
+  } finally {
+    await h.close();
+  }
+});
+
 test('signed GitHub policy denies forks, wrong owners, private repos, non-push events, branches, audiences, and invalid times', async () => {
   const h = await harness();
   try {

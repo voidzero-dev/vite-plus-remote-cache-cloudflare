@@ -31,10 +31,11 @@ export async function fetchMetadata(
 
   const { entries } = selected;
   stats.r2_operations += entries.length;
-  const objects = await deadline
-    .run(Promise.all(entries.map((entry) => env.ARTIFACTS.get(entry.value_object))))
+  const settled = await deadline
+    .run(Promise.allSettled(entries.map((entry) => env.ARTIFACTS.get(entry.value_object))))
     .catch(() => unavailable());
-  // Check every value before responding, so a missing or resized object is still a 503.
+  const objects = settled.map((result) => (result.status === 'fulfilled' ? result.value : null));
+  // Check every value before responding, so a missing, failed, or resized object is still a 503.
   if (
     objects.some(
       (object, i) =>
@@ -78,11 +79,16 @@ export async function fetchMetadata(
   };
 }
 
-async function pump(
+// Write `parts` in order, copying each stream's chunks. If the client cancels the response, the
+// writable errors: the stream being copied is cancelled, so a pending read can't keep it open, and
+// so are the streams not reached yet.
+export async function pump(
   parts: (Uint8Array | ReadableStream<Uint8Array>)[],
   writable: WritableStream<Uint8Array>,
 ): Promise<void> {
   const writer = writable.getWriter();
+  let active: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  writer.closed.catch(() => active?.cancel().catch(() => {}));
   let next = 0;
   try {
     for (; next < parts.length; next++) {
@@ -91,17 +97,19 @@ async function pump(
         await writer.write(part);
         continue;
       }
-      const reader = part.getReader();
+      active = part.getReader();
       for (;;) {
-        const { done, value } = await reader.read();
+        const { done, value } = await active.read();
         if (done) break;
         await writer.write(value);
       }
+      active = undefined;
     }
     await writer.close();
   } catch (error) {
     // A truncated body fails the client's CBOR decoding, which it treats as a failed read.
     await writer.abort(error).catch(() => {});
+    await active?.cancel().catch(() => {});
     for (const part of parts.slice(next + 1))
       if (!(part instanceof Uint8Array)) await part.cancel().catch(() => {});
   }
