@@ -382,7 +382,7 @@ test('cleanup preserves a recreated target and claims at most 16 generations', a
 });
 
 test('isolate admission bounds memory and releases capacity', async () => {
-  const admission = new Admission({ storeWaitMs: 0, readWaitMs: 0 });
+  const admission = new Admission({ reads: 4, storeWaitMs: 0, readWaitMs: 0 });
   const first = await admission.acquire(true),
     second = await admission.acquire(true);
   await assert.rejects(admission.acquire(true), { status: 503, code: 'concurrency_limit' });
@@ -423,7 +423,7 @@ test('isolate admission makes a burst wait for capacity in turn', async () => {
 });
 
 test('isolate admission stops waiting at the deadline', async () => {
-  const admission = new Admission({ readWaitMs: 60_000, pollMs: 1 });
+  const admission = new Admission({ reads: 4, readWaitMs: 60_000, pollMs: 1 });
   const readers = await Promise.all(Array.from({ length: 4 }, () => admission.acquire(false)));
   const deadline = new Deadline(20);
   try {

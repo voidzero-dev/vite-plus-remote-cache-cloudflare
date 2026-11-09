@@ -88,24 +88,24 @@ Fork PR workflows run in the base repository, so their tokens carry its reposito
 
 ## Limits and authorization
 
-| Resource                                     | Default maximum   |
-| -------------------------------------------- | ----------------- |
-| Each key                                     | 16 KiB            |
-| Opaque value                                 | 4 MiB             |
-| Store metadata                               | 5 MiB             |
-| Fetch request                                | 40 KiB            |
-| Blob                                         | 64 MiB            |
-| Entire store request                         | 72 MiB            |
-| Multipart headers per part                   | 8 KiB             |
-| Multipart parts                              | 2                 |
-| R2 upload part                               | 5 MiB, sequential |
-| Store request deadline                       | 2 minutes         |
-| Metadata / blob lookup deadline              | 15 seconds        |
-| Upload lease                                 | 15 minutes        |
-| Entries per key                              | 8, at most 16     |
-| Retired-entry/late-upload grace              | 10 minutes        |
-| Concurrent buffered stores/reads per isolate | 2 / 4             |
-| Wait for a store/read slot                   | 30 / 10 seconds   |
+| Resource                            | Default maximum   |
+| ----------------------------------- | ----------------- |
+| Each key                            | 16 KiB            |
+| Opaque value                        | 4 MiB             |
+| Store metadata                      | 5 MiB             |
+| Fetch request                       | 40 KiB            |
+| Blob                                | 64 MiB            |
+| Entire store request                | 72 MiB            |
+| Multipart headers per part          | 8 KiB             |
+| Multipart parts                     | 2                 |
+| R2 upload part                      | 5 MiB, sequential |
+| Store request deadline              | 2 minutes         |
+| Metadata / blob lookup deadline     | 15 seconds        |
+| Upload lease                        | 15 minutes        |
+| Entries per key                     | 8, at most 16     |
+| Retired-entry/late-upload grace     | 10 minutes        |
+| Concurrent stores/reads per isolate | 2 / 32            |
+| Wait for a store/read slot          | 30 / 10 seconds   |
 
 The `LIMITS` Wrangler variable is a JSON object with optional keys `key`, `value`, `metadata`, `fetch`, `blob`, `store`, `headers`, and `deadlineMs`. It can lower the tested ceilings. Envelope limits must accommodate their field limits and framing. Raising ceilings requires code changes and new memory, CPU, and account-limit measurements. An HTTP request without `Content-Length` reserves the full store limit. Actual bytes replace that reservation only at publication; pending, retired, and deleting generations remain charged.
 

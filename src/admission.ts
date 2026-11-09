@@ -11,18 +11,21 @@ export interface AdmissionOptions {
   pollMs: number;
 }
 
+// A store buffers its value, so few run at once. A read holds only its request body and the
+// lookups it makes in D1 and R2: values and blobs stream after its slot is released. Reads come in
+// bursts, one lookup for every task of a build, so many run at once.
 const defaults: AdmissionOptions = {
   stores: 2,
-  reads: 4,
+  reads: 32,
   storeWaitMs: 30_000,
   readWaitMs: 10_000,
   pollMs: 50,
 };
 
-// Isolate-wide resource counters contain no request data or I/O promises. Rate
-// limiting controls traffic; these counters additionally bound simultaneous buffers.
-// A request over the limit waits for a slot before failing, so a burst of requests
-// from one build is served in turn. A waiting request has read none of its body.
+// Isolate-wide resource counters contain no request data or I/O promises. They bound the
+// requests an isolate serves at once, and so its simultaneous buffers. A request over the limit
+// waits for a slot before failing, so a burst of requests from one build is served in turn. A
+// waiting request has read none of its body.
 // Waiters poll with their own timers rather than being woken by the releasing
 // request, so no promise is resolved from another request's context.
 export class Admission {
