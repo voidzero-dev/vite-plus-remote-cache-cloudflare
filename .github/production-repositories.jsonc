@@ -12,4 +12,6 @@
   "rolldown": "rolldown/rolldown",
   "vite-plus": "voidzero-dev/vite-plus",
   "void-replay": { "repository": "wan9chi/void", "pullRequests": true },
+  "oxc-angular-replay": { "repository": "wan9chi/oxc-angular-compiler", "pullRequests": true },
+  "rolldown-replay": { "repository": "wan9chi/rolldown", "pullRequests": true },
 }
