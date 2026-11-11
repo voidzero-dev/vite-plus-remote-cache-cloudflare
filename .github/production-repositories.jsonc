@@ -9,8 +9,10 @@
 // sets each namespace's pull request opt-in from this list, overriding `pnpm operator policy`.
 // Data in a removed namespace expires with its retention.
 {
+  "oxc-angular-compiler": "voidzero-dev/oxc-angular-compiler",
   "rolldown": "rolldown/rolldown",
   "vite-plus": "voidzero-dev/vite-plus",
+  "void": "voidzero-dev/void",
   "void-replay": { "repository": "wan9chi/void", "pullRequests": true },
   "oxc-angular-replay": { "repository": "wan9chi/oxc-angular-compiler", "pullRequests": true },
   "rolldown-replay": { "repository": "wan9chi/rolldown", "pullRequests": true },
