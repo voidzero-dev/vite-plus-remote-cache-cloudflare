@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { URL } from 'node:url';
+import { promisify } from 'node:util';
 import { parse, type ParseError } from 'jsonc-parser';
 import { query } from '../operator.ts';
 import type { RunContext, Target } from './deploy.ts';
@@ -17,6 +19,18 @@ export const production: ProductionConfig = {
   name: 'voidzero-remote-cache',
   profile: 'free',
 };
+
+// The commit that a public repository's branch points to now. Reads the remote, not the checkout.
+export async function branchHead(repository: string, ref: string): Promise<string> {
+  const { stdout } = await promisify(execFile)(
+    'git',
+    ['ls-remote', `https://github.com/${repository}.git`, ref],
+    { timeout: 30_000 },
+  );
+  const sha = /^([a-f0-9]{40})\t/.exec(stdout)?.[1];
+  if (!sha) throw new Error(`Could not read ${ref} of ${repository}`);
+  return sha;
+}
 
 // Add or remove production repositories in this file.
 const repositoriesFile = new URL('../../.github/production-repositories.jsonc', import.meta.url);
@@ -59,9 +73,10 @@ export function parseRepositories(text: string): Record<string, ProductionReposi
 }
 
 export function productionTarget(
-  context: Pick<RunContext, 'repository' | 'event' | 'ref'>,
+  context: Pick<RunContext, 'repository' | 'event' | 'ref' | 'sha'>,
   config: ProductionConfig = production,
   repositories: string = readFileSync(repositoriesFile, 'utf8'),
+  head: () => Promise<string> = () => branchHead(config.source, config.ref),
 ): Target {
   // Repositories created by Deploy to Cloudflare copy this workflow; they must not deploy it.
   if (context.repository !== config.source)
@@ -82,6 +97,16 @@ export function productionTarget(
     bindings: Object.fromEntries(
       entries.map(([namespace, entry]) => [namespace, entry.repository]),
     ),
+    // A re-run deploys its original commit, and prepare applies that commit's list. Deploy only the
+    // commit main points to now, checked again right before the policy changes.
+    async verify() {
+      const current = await head();
+      if (current !== context.sha)
+        throw new Error(
+          `${config.ref} is at ${current}, but this run would deploy ${context.sha}. ` +
+            'To roll back, revert the change on main and run the workflow again.',
+        );
+    },
     // The list decides which namespaces serve reads, accept uploads, and accept pull request
     // uploads, overriding `pnpm operator policy`. Only changed rows are updated: the changed_policy
     // trigger bumps policy_version on any switch update, which stops in-flight uploads from publishing.

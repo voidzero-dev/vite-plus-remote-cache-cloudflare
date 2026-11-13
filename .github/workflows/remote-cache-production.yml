@@ -20,6 +20,21 @@ jobs:
       name: production
       url: ${{ steps.deploy.outputs.url }}
     steps:
+      # A re-run deploys its original commit, including that commit's repository list and pull
+      # request opt-ins. Deploy only the current main head; roll back by reverting on main. This
+      # step fails early; `ci:deploy` checks again right before it changes production.
+      - name: Check that main still points to this commit
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const branch = context.payload.repository.default_branch;
+            const { data } = await github.rest.repos.getBranch({ ...context.repo, branch });
+            if (data.commit.sha !== context.sha) {
+              core.setFailed(
+                `${branch} is at ${data.commit.sha}, but this run would deploy ${context.sha}. ` +
+                  `To roll back, revert the change on ${branch} and run the workflow again.`,
+              );
+            }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false

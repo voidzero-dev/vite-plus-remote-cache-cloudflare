@@ -12,6 +12,7 @@ const dispatch = {
   repository: production.source,
   event: 'workflow_dispatch',
   ref: 'refs/heads/main',
+  sha,
 };
 
 test('CI run context identifies the source commit and workflow attempt', () => {
@@ -166,6 +167,42 @@ test('CI deployments set up every namespace before one Worker deployment and pre
 
     log.length = 0;
     await assert.rejects(run({ subdomain: 'other' }), /Workers subdomain/);
+    assert.deepEqual([...log], []);
+
+    // verify runs before setup changes anything and again right before prepare.
+    repositories['acme/two'] = 2;
+    log.length = 0;
+    await run({
+      async verify() {
+        log.push('verify');
+      },
+    });
+    assert.equal(log[0], 'verify');
+    assert.equal(log[log.indexOf('prepare') - 1], 'verify');
+
+    // A branch that advances after the first check stops the deployment before prepare.
+    log.length = 0;
+    let checks = 0;
+    await assert.rejects(
+      run({
+        async verify() {
+          if (++checks > 1) throw new Error('main advanced');
+        },
+      }),
+      /main advanced/,
+    );
+    assert.deepEqual(deploys(), []);
+
+    // A stale run stops before setup changes anything.
+    log.length = 0;
+    await assert.rejects(
+      run({
+        async verify() {
+          throw new Error('stale run');
+        },
+      }),
+      /stale run/,
+    );
     assert.deepEqual(log, []);
   } finally {
     await h.close();
@@ -184,6 +221,15 @@ test('production deploys only manual default-branch runs from this repository', 
   assert.throws(() => productionTarget({ ...context, repository: 'someone/copy' }), /voidzero-dev/);
   for (const name of ['vp-cache-ci', 'vp-cache-ci-staging'])
     assert.throws(() => productionTarget(context, { ...production, name }), /staging/);
+});
+
+test('production deploys only the commit main points to when it checks', async () => {
+  const heads = [sha, 'b'.repeat(40)];
+  const target = productionTarget(dispatch, production, '{ "test": "owner/repo" }', async () =>
+    heads.shift()!,
+  );
+  await target.verify!();
+  await assert.rejects(target.verify!(), /refs\/heads\/main is at b{40}.*revert/);
 });
 
 test('production repository lists map namespaces to public owner/repo names', () => {
