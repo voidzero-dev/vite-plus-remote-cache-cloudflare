@@ -187,8 +187,8 @@ importers:
         specifier: 26.6.6
         version: 26.6.6
       cborg:
-        specifier: 6.2.1
-        version: 6.2.1
+        specifier: 7.0.0
+        version: 7.0.0
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -1495,8 +1495,8 @@ packages:
   blake3-wasm@2.1.5:
     resolution: {integrity: sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g==}
 
-  cborg@6.2.1:
-    resolution: {integrity: sha512-DwiF3Jd5RW6kJuTQMzQb/sdZD03utp15EcQNOMTvE/ZYCdDPzETsGOY5lj8imKxbsEuYvOzcMSiKLiT4C2/2Lw==}
+  cborg@7.0.0:
+    resolution: {integrity: sha512-YYXJ+ozY26INm46oz2P+iOww/LhrfgPz2CuHaskDcitt0rKyh6LlWhNCfMlxxcdD+k7m0TspkRvcPPXAGYzZ8w==}
     hasBin: true
 
   chai@6.3.0:
@@ -2724,7 +2724,7 @@ snapshots:
 
   blake3-wasm@2.1.5: {}
 
-  cborg@6.2.1: {}
+  cborg@7.0.0: {}
 
   chai@6.3.0: {}
 
