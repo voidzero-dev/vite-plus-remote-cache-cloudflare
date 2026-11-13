@@ -212,6 +212,50 @@ test('failed deletion remains charged and a retry removes only the claimed gener
   }
 });
 
+test('cleanup deletes a generation whose recorded multipart upload R2 can no longer abort', async () => {
+  const h = await harness();
+  try {
+    // Publication clears the ID of the upload it completed.
+    assert.equal(
+      (await h.store(bytes('A'), bytes('S'), bytes('v'), new Uint8Array(5 * 1024 * 1024 + 1)))
+        .status,
+      200,
+    );
+    assert.equal(
+      (await h.db
+        .prepare('SELECT count(*) AS n FROM generations WHERE upload_id IS NOT NULL')
+        .first())!.n,
+      0,
+    );
+    // Generations published before that change still carry the ID.
+    await h.db
+      .prepare("UPDATE generations SET upload_id = 'completed', expires_at = 0, gc_after = 0")
+      .run();
+    const original = await h.mf.getBindings<Env>();
+    const bucket = new Proxy(original.ARTIFACTS, {
+      get(target, prop) {
+        if (prop === 'resumeMultipartUpload')
+          return () => ({
+            abort: async () => {
+              throw new Error('Injected: no such upload');
+            },
+          });
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await cleanup({ ...original, ARTIFACTS: bucket });
+    assert.equal((await h.db.prepare('SELECT count(*) AS n FROM generations').first())!.n, 0);
+    assert.equal(
+      (await h.db.prepare('SELECT charged_bytes FROM deployment').first())!.charged_bytes,
+      0,
+    );
+    assert.equal((await h.bucket.list()).objects.length, 0);
+  } finally {
+    await h.close();
+  }
+});
+
 test('unknown-length requests reserve the full limit and cancellation prevents publication', async () => {
   const h = await harness();
   try {

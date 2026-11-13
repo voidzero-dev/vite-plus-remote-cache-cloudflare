@@ -197,7 +197,7 @@ export async function publish(
       db.batch([
         db
           .prepare(`UPDATE generations SET state = 'ready', key = ?, secondary_key = ?, blob_id = ?,
-      value_size = ?, blob_size = ?, charged_bytes = ?,
+      value_size = ?, blob_size = ?, charged_bytes = ?, upload_id = NULL,
       expires_at = unixepoch() + (SELECT retention_seconds FROM scopes WHERE scope_id = generations.scope_id),
       gc_after = unixepoch() + (SELECT retention_seconds FROM scopes WHERE scope_id = generations.scope_id)
       WHERE generation_id = ? AND state = 'uploading' AND lease_until > unixepoch() AND token_exp > unixepoch()
@@ -253,11 +253,13 @@ export async function cleanup(env: Env): Promise<void> {
   let deleted = 0;
   for (const generation of claimed.results) {
     try {
+      // A recorded upload may already be complete, aborted, or gone: R2 doesn't check that a
+      // resumed upload still exists. Failing to abort must not keep the generation and its charge
+      // forever. The bucket lifecycle aborts any upload left incomplete.
       if (generation.upload_id)
-        await env.ARTIFACTS.resumeMultipartUpload(
-          generation.blob_object,
-          generation.upload_id,
-        ).abort();
+        await env.ARTIFACTS.resumeMultipartUpload(generation.blob_object, generation.upload_id)
+          .abort()
+          .catch(() => {});
       await env.ARTIFACTS.delete([generation.value_object, generation.blob_object]);
       // FK deletion only removes entries still selecting this generation.
       await env.INDEX.prepare(
