@@ -197,7 +197,7 @@ export async function publish(
       db.batch([
         db
           .prepare(`UPDATE generations SET state = 'ready', key = ?, secondary_key = ?, blob_id = ?,
-      value_size = ?, blob_size = ?, charged_bytes = ?,
+      value_size = ?, blob_size = ?, charged_bytes = ?, upload_id = NULL,
       expires_at = unixepoch() + (SELECT retention_seconds FROM scopes WHERE scope_id = generations.scope_id),
       gc_after = unixepoch() + (SELECT retention_seconds FROM scopes WHERE scope_id = generations.scope_id)
       WHERE generation_id = ? AND state = 'uploading' AND lease_until > unixepoch() AND token_exp > unixepoch()
@@ -234,6 +234,12 @@ export async function abandon(db: D1Database, id: string): Promise<void> {
     .run();
 }
 
+// R2 binding errors read "<operation>: <message> (<code>)". Code 10024 (NoSuchUpload) means the
+// multipart upload no longer exists.
+function uploadGone(error: unknown): boolean {
+  return error instanceof Error && error.message.endsWith('(10024)');
+}
+
 export async function cleanup(env: Env): Promise<void> {
   const limit = Number(env.GC_BATCH_SIZE);
   if (!Number.isInteger(limit) || limit < 1 || limit > 256)
@@ -253,11 +259,15 @@ export async function cleanup(env: Env): Promise<void> {
   let deleted = 0;
   for (const generation of claimed.results) {
     try {
+      // A recorded upload may already be complete, aborted, or gone: R2 doesn't check that a
+      // resumed upload still exists. Only an error that confirms this lets deletion go on. Any
+      // other failure keeps the generation, its charge, and its upload ID for the next retry.
       if (generation.upload_id)
-        await env.ARTIFACTS.resumeMultipartUpload(
-          generation.blob_object,
-          generation.upload_id,
-        ).abort();
+        await env.ARTIFACTS.resumeMultipartUpload(generation.blob_object, generation.upload_id)
+          .abort()
+          .catch((error: unknown) => {
+            if (!uploadGone(error)) throw error;
+          });
       await env.ARTIFACTS.delete([generation.value_object, generation.blob_object]);
       // FK deletion only removes entries still selecting this generation.
       await env.INDEX.prepare(
