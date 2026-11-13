@@ -234,6 +234,12 @@ export async function abandon(db: D1Database, id: string): Promise<void> {
     .run();
 }
 
+// R2 binding errors read "<operation>: <message> (<code>)". Code 10024 (NoSuchUpload) means the
+// multipart upload no longer exists.
+function uploadGone(error: unknown): boolean {
+  return error instanceof Error && error.message.endsWith('(10024)');
+}
+
 export async function cleanup(env: Env): Promise<void> {
   const limit = Number(env.GC_BATCH_SIZE);
   if (!Number.isInteger(limit) || limit < 1 || limit > 256)
@@ -254,12 +260,14 @@ export async function cleanup(env: Env): Promise<void> {
   for (const generation of claimed.results) {
     try {
       // A recorded upload may already be complete, aborted, or gone: R2 doesn't check that a
-      // resumed upload still exists. Failing to abort must not keep the generation and its charge
-      // forever. The bucket lifecycle aborts any upload left incomplete.
+      // resumed upload still exists. Only an error that confirms this lets deletion go on. Any
+      // other failure keeps the generation, its charge, and its upload ID for the next retry.
       if (generation.upload_id)
         await env.ARTIFACTS.resumeMultipartUpload(generation.blob_object, generation.upload_id)
           .abort()
-          .catch(() => {});
+          .catch((error: unknown) => {
+            if (!uploadGone(error)) throw error;
+          });
       await env.ARTIFACTS.delete([generation.value_object, generation.blob_object]);
       // FK deletion only removes entries still selecting this generation.
       await env.INDEX.prepare(

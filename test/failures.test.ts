@@ -227,24 +227,19 @@ test('cleanup deletes a generation whose recorded multipart upload R2 can no lon
         .first())!.n,
       0,
     );
-    // Generations published before that change still carry the ID.
+    // Generations published before that change still carry the ID. R2 reports that the upload no
+    // longer exists.
     await h.db
       .prepare("UPDATE generations SET upload_id = 'completed', expires_at = 0, gc_after = 0")
       .run();
     const original = await h.mf.getBindings<Env>();
-    const bucket = new Proxy(original.ARTIFACTS, {
-      get(target, prop) {
-        if (prop === 'resumeMultipartUpload')
-          return () => ({
-            abort: async () => {
-              throw new Error('Injected: no such upload');
-            },
-          });
-        const value = Reflect.get(target, prop);
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
+    await cleanup({
+      ...original,
+      ARTIFACTS: failingAbort(
+        original.ARTIFACTS,
+        'abortMultipartUpload: The specified multipart upload does not exist. (10024)',
+      ),
     });
-    await cleanup({ ...original, ARTIFACTS: bucket });
     assert.equal((await h.db.prepare('SELECT count(*) AS n FROM generations').first())!.n, 0);
     assert.equal(
       (await h.db.prepare('SELECT charged_bytes FROM deployment').first())!.charged_bytes,
@@ -255,6 +250,63 @@ test('cleanup deletes a generation whose recorded multipart upload R2 can no lon
     await h.close();
   }
 });
+
+test('cleanup keeps an unfinished upload and its charge when the abort fails transiently', async () => {
+  const h = await harness();
+  try {
+    const original = await h.mf.getBindings<Env>();
+    const part = 5 * 1024 * 1024;
+    const scope = await getScope(h.db, 'test');
+    const generation = await reserve(h.db, scope, Math.floor(Date.now() / 1000) + 300, part);
+    const upload = await original.ARTIFACTS.createMultipartUpload(generation.blob_object);
+    const uploaded = await upload.uploadPart(1, new Uint8Array(part));
+    await h.db
+      .prepare('UPDATE generations SET upload_id = ?, gc_after = 0 WHERE generation_id = ?')
+      .bind(upload.uploadId, generation.generation_id)
+      .run();
+    const remaining = async () =>
+      h.db
+        .prepare(
+          'SELECT (SELECT count(*) FROM generations WHERE upload_id IS NOT NULL) AS n, charged_bytes FROM deployment',
+        )
+        .first();
+    await cleanup({
+      ...original,
+      ARTIFACTS: failingAbort(
+        original.ARTIFACTS,
+        'abortMultipartUpload: We encountered an internal error. Please try again. (10001)',
+      ),
+    });
+    assert.deepEqual(await remaining(), { n: 1, charged_bytes: part });
+    // The upload still exists, so a retry can abort it, delete the generation, and release the charge.
+    await h.db.prepare('UPDATE generations SET gc_after = 0').run();
+    await cleanup(original);
+    assert.deepEqual(await remaining(), { n: 0, charged_bytes: 0 });
+    await assert.rejects(
+      original.ARTIFACTS.resumeMultipartUpload(generation.blob_object, upload.uploadId).complete([
+        uploaded,
+      ]),
+    );
+  } finally {
+    await h.close();
+  }
+});
+
+// An R2 binding whose multipart aborts reject with the given binding error message.
+function failingAbort(bucket: R2Bucket, message: string): R2Bucket {
+  return new Proxy(bucket, {
+    get(target, prop) {
+      if (prop === 'resumeMultipartUpload')
+        return () => ({
+          abort: async () => {
+            throw new Error(message);
+          },
+        });
+      const value = Reflect.get(target, prop);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
 
 test('unknown-length requests reserve the full limit and cancellation prevents publication', async () => {
   const h = await harness();
