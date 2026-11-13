@@ -45,6 +45,8 @@ export interface Target {
   // Namespace to public GitHub owner/repository.
   bindings: Readonly<Record<string, string>>;
   setupArgs?: string[];
+  // Runs before setup changes anything and again just before prepare. Throw to stop the deployment.
+  verify?(): Promise<void>;
   // Runs after every namespace is set up, before the Worker deployment.
   prepare?(config: Config, io: OperatorIO): Promise<void>;
 }
@@ -85,6 +87,7 @@ export async function deployTarget(
       await io.writeConfig(config);
     },
   };
+  await target.verify?.();
   for (const namespace of namespaces)
     await runOperator(
       [
@@ -104,6 +107,7 @@ export async function deployTarget(
       setupIO,
     );
   const config = await io.readConfig();
+  await target.verify?.();
   await target.prepare?.(config, io);
   const scopes = await query(io, config, 'SELECT scope_id FROM scopes');
   config.vars['NAMESPACES'] = JSON.stringify(scopes.map((scope) => String(scope['scope_id'])));
