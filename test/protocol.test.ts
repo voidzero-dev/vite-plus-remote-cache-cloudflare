@@ -102,6 +102,46 @@ test('multipart accepts every split point, either part order, and boundary-like 
   }
 });
 
+test('multipart streams a part whose bytes repeat padded boundary prefixes', async () => {
+  // Each prefix is followed by padding up to the header limit and then a non-CRLF byte, so it
+  // stays body data. The parser must still yield as it reads instead of buffering the whole body.
+  const prefix = '\r\n--b' + ' '.repeat(8186) + 'X';
+  const value = prefix.repeat(128);
+  const data = Buffer.from(
+    'preamble\r\n--b\r\nContent-Disposition: form-data; name="metadata"\r\nContent-Type: application/cbor\r\n\r\n' +
+      value +
+      '\r\n--b--\r\n',
+  );
+  let offset = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= data.length) return controller.close();
+      controller.enqueue(data.subarray(offset, offset + 65536));
+      offset += 65536;
+    },
+  });
+  const deadline = new Deadline(5000);
+  const input = new Input(stream, data.length, deadline);
+  let largest = 0;
+  const fill = input.fill.bind(input);
+  input.fill = async () => {
+    const more = await fill();
+    largest = Math.max(largest, input.buffer.length);
+    return more;
+  };
+  try {
+    const chunks: Uint8Array[] = [];
+    for await (const part of multipart(input, 'b', 8192))
+      for await (const chunk of part.body) chunks.push(chunk);
+    assert.equal(Buffer.concat(chunks).toString(), value);
+    assert.ok(chunks.length > 1, `expected several chunks, received ${chunks.length}`);
+    assert.ok(largest < 128 * 1024, `buffer reached ${largest} bytes`);
+  } finally {
+    deadline.dispose();
+    input.close();
+  }
+});
+
 test('a cancelled response cancels the value being copied and the ones after it', async () => {
   let copying = false,
     later = false;
